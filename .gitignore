@@ -1,0 +1,18 @@
+# Environment variables (Do not commit your Discord token!)
+.env
+
+# Python Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS / IDE generated files
+.vscode/
+.idea/
+.DS_Store
