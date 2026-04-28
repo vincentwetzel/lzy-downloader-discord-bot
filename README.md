@@ -21,6 +21,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 - **Auto-Launching:** If the LzyDownloader app is closed, the bot automatically launches it silently in headless "Server Mode" (`--server`), which bypasses UI popups and auto-accepts playlists.
 - **Live Progress Bars:** Updates the Discord message in real-time with an ASCII progress bar, ETA, and download speed.
 - **Completion Notifications:** Sends a final message to ping you when a download finishes (when used in a server channel), ensuring you receive a push notification.
+- **Queue Completion Notification:** After the last item in the queue has finished downloading, the bot sends a final confirmation message to let you know that all tasks are complete.
 - **Secure Communication:** Uses auto-generated, randomized local API tokens to ensure that only the bot can communicate with the local application.
 - **Single-Instance Guard:** Prevents accidentally running multiple bridge processes at the same time.
 - **Auto-Shutdown:** The C++ app automatically closes when the queue is finished, freeing up system resources.
@@ -74,3 +75,6 @@ The bot will start the download locally on your PC and report the progress. In D
 
 ## Architecture
 Read ARCHITECTURE.md for technical context on the local API schema, auth flow, and state management, and AGENTS.md for information on the active background workers.
+
+## Development & Contributing
+When contributing to the codebase, please ensure that all Python code adheres to the **PEP8 style guide**. Additionally, **Python type hints** are strictly required for all function arguments and return types to maintain code clarity and catch potential bugs early.

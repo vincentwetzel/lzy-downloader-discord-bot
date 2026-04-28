@@ -11,6 +11,7 @@ The primary Python process (`bot.py`) that maintains a connection to the Discord
   - Checks the health of the local C++ API and launches the Download Worker if it's not running.
   - Creates asynchronous tasks (`asyncio` loops) to poll the `GET /status` endpoint every 4 seconds.
   - Formats API responses into ASCII progress bars (`[#####----------] 50%`) and updates Discord messages.
+  - Tracks active download jobs and sends a final notification when the entire queue is empty.
   - Uses a local single-instance lock so only one bridge process runs at a time.
 
 ## 2. The Download Worker Agent (C++ App)
