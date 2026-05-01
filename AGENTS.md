@@ -9,6 +9,7 @@ The primary Python process (`bot.py`) that maintains a connection to the Discord
 - **Tasks:**
   - Listens for `/download`, `/audio`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop` commands from the authorized Discord user.
   - Accepts authorized direct-message URLs as standard video download requests.
+  - Scans recent authorized direct messages on startup and queues unacknowledged offline URL requests oldest-first.
   - Sends online and offline notification DMs to the authorized user when connecting or gracefully shutting down.
   - Checks the health of the local C++ API and launches the Download Worker if it is not running.
   - Reads the local bearer token from `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`.

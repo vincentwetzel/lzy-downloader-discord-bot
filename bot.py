@@ -56,6 +56,18 @@ def is_valid_url(url: str) -> bool:
     except Exception:
         return False
 
+def create_progress_bar(progress: float, length: int = 20) -> str:
+    """Generates an ASCII progress bar for Discord messages."""
+    try:
+        progress_val = float(progress)
+    except (ValueError, TypeError):
+        progress_val = 0.0
+        
+    progress_val = max(0.0, min(100.0, progress_val))
+    filled_length = int(length * progress_val // 100)
+    bar = '█' * filled_length + '░' * (length - filled_length)
+    return f"`[{bar}] {progress_val:.1f}%`"
+
 class LzyBot(discord.Client):
     def __init__(self) -> None:
         # Enable the message content intent so we can read DM text
@@ -76,8 +88,46 @@ class LzyBot(discord.Client):
             try:
                 user = await self.fetch_user(int(AUTHORIZED_USER_ID))
                 await user.send("🟢 **LzyDownloader Discord Bridge is now online!**")
+
+                # Check for missed DMs sent while the bot was offline
+                dm_channel = await user.create_dm()
+                messages = [m async for m in dm_channel.history(limit=20)]
+
+                missed_msgs = []
+                for i, msg in enumerate(messages):
+                    if msg.author.id == int(AUTHORIZED_USER_ID):
+                        content = msg.content.strip()
+                        if is_valid_url(content):
+                            # Check if the bot already replied to this specific request
+                            # Since history is newest-to-oldest, newer messages are at indices < i
+                            bot_replied = any(
+                                (newer_msg.author == self.user and content in newer_msg.content)
+                                for newer_msg in messages[:i]
+                            )
+                            if not bot_replied:
+                                missed_msgs.append(msg)
+
+                # Create closure-safe callbacks for our background task
+                def create_callbacks(s_msg: discord.Message, chan: discord.abc.Messageable):
+                    async def edit_callback(new_content: str) -> None:
+                        await s_msg.edit(content=new_content)
+                    async def send_callback(new_content: str) -> None:
+                        await chan.send(new_content)
+                    return edit_callback, send_callback
+
+                # Process oldest missed messages first
+                for msg in reversed(missed_msgs):
+                    content = msg.content.strip()
+                    sent_msg = await msg.channel.send(
+                        f"⏳ **Missed offline request detected. Starting download:** <{content}>\n"
+                        "*Running in background...*"
+                    )
+                    
+                    edit_msg_cb, send_msg_cb = create_callbacks(sent_msg, msg.channel)
+                    self.loop.create_task(run_download_job(content, edit_msg_cb, send_msg_cb))
+
             except Exception as e:
-                print(f"Failed to send startup DM: {e}")
+                print(f"Failed to process startup DM or missed messages: {e}")
 
     async def close(self) -> None:
         if AUTHORIZED_USER_ID:
@@ -491,4 +541,163 @@ def check_api_health() -> None:
                 last_error = "Waiting for api_token.txt to be created..."
                 continue
 
-            headers 
+            headers = {"Authorization": f"Bearer {api_key}"}
+            res = requests.get(
+                f"{BASE_URL}/status", headers=headers, timeout=2, proxies=proxies
+            )
+            if res.status_code == 200:
+                return  # It's running and authorized, we're good.
+            last_error = f"API returned status {res.status_code}"
+        except requests.exceptions.RequestException as e:
+            last_error = str(e)
+
+    raise RuntimeError(
+        f"**LzyDownloader failed to launch or respond.**\nLast error: {last_error}"
+    )
+
+
+async def run_download_job(
+    url: str,
+    edit_msg: Callable[[str], Awaitable[None]],
+    send_msg: Callable[[str], Awaitable[None]],
+    download_type: str = "video"
+) -> None:
+    """Enqueues a single download via the local API and polls until it finishes."""
+    global _active_jobs
+
+    async with _launch_lock:
+        try:
+            # Ensure the API is running before we queue
+            await asyncio.to_thread(check_api_health)
+        except Exception as e:
+            await edit_msg(f"❌ {e}")
+            return
+
+    api_key = await asyncio.to_thread(get_lzy_api_key)
+    if not api_key:
+        await edit_msg("❌ Failed to read `api_token.txt`. The app may not have generated it.")
+        return
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    proxies = {"http": "", "https": ""}
+    payload = {"url": url, "type": download_type}
+
+    # Enqueue the download
+    try:
+        res = await asyncio.to_thread(
+            requests.post,
+            f"{BASE_URL}/enqueue",
+            json=payload,
+            headers=headers,
+            timeout=5,
+            proxies=proxies
+        )
+        if res.status_code != 200:
+            await edit_msg(f"❌ API rejected the download: HTTP {res.status_code}\n{res.text}")
+            return
+    except requests.exceptions.RequestException as e:
+        await edit_msg(f"❌ Failed to reach the LzyDownloader Local API.\n`{e}`")
+        return
+
+    async with _jobs_lock:
+        _active_jobs += 1
+
+    last_status_message = ""
+    poll_interval = 1.5
+
+    try:
+        while True:
+            await asyncio.sleep(poll_interval)
+            try:
+                res = await asyncio.to_thread(
+                    requests.get,
+                    f"{BASE_URL}/status",
+                    headers=headers,
+                    timeout=5,
+                    proxies=proxies
+                )
+            except requests.exceptions.RequestException:
+                # The app might have closed successfully (e.g., 'exit after' is enabled). Check the backup file.
+                backup_item = await asyncio.to_thread(find_backup_item, url, download_type)
+                if backup_item:
+                    backup_status = str(backup_item.get("status", "")).lower()
+                    if backup_status == "completed":
+                        await edit_msg(f"✅ **Download Complete:** <{url}>")
+                    elif backup_status in {"failed", "stopped"}:
+                        await edit_msg(f"❌ **Download {backup_status.title()}:** <{url}>")
+                    else:
+                        await edit_msg(f"❌ Connection to LzyDownloader lost while processing <{url}>.")
+                else:
+                    await edit_msg(f"✅ **Download Finished:** <{url}>")
+                break
+
+            if res.status_code != 200:
+                await edit_msg(f"❌ API polling failed: HTTP {res.status_code}")
+                break
+
+            data = res.json()
+            jobs = data.get("jobs", [])
+
+            my_job = None
+            for job in jobs:
+                if str(job.get("url")) == url and str(job.get("type", "video")) == download_type:
+                    my_job = job
+                    break
+
+            if not my_job:
+                # If it's not in the active list, check the backup queue to see if it finished or failed
+                backup_item = await asyncio.to_thread(find_backup_item, url, download_type)
+                if backup_item:
+                    backup_status = str(backup_item.get("status", "")).lower()
+                    if backup_status == "completed":
+                        await edit_msg(f"✅ **Download Complete:** <{url}>")
+                    elif backup_status in {"failed", "stopped"}:
+                        await edit_msg(f"❌ **Download {backup_status.title()}:** <{url}>")
+                    else:
+                        await edit_msg(f"⚠️ Download vanished from API but is in backup as `{backup_status}`: <{url}>")
+                else:
+                    await edit_msg(f"✅ **Download Finished:** <{url}>")
+                break
+
+            progress = my_job.get("progress", 0.0)
+            status_text = my_job.get("status", "Processing")
+            speed = my_job.get("speed", "")
+            eta = my_job.get("eta", "")
+            
+            # Escape markdown formatting if present in the status
+            status_text = str(status_text).replace("*", "\\*").replace("_", "\\_").replace("~", "\\~")
+
+            progress_bar = create_progress_bar(progress)
+
+            current_message = (
+                f"⏳ **Downloading:** <{url}>\n"
+                f"**Status:** {status_text}\n"
+                f"**Progress:** {progress_bar}\n"
+            )
+            if speed:
+                current_message += f"**Speed:** {speed}\n"
+            if eta:
+                current_message += f"**ETA:** {eta}\n"
+
+            if current_message != last_status_message:
+                try:
+                    await edit_msg(current_message)
+                    last_status_message = current_message
+                except discord.errors.HTTPException:
+                    pass
+
+    finally:
+        async with _jobs_lock:
+            _active_jobs = max(0, _active_jobs - 1)
+
+
+if __name__ == "__main__":
+    if not TOKEN:
+        print("❌ DISCORD_BOT_TOKEN is not set in the .env file. Exiting.")
+        sys.exit(1)
+        
+    enforce_single_instance()
+    client.run(TOKEN)

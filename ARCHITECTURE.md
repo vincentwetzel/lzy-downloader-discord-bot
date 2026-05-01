@@ -18,6 +18,7 @@ The project is split into two distinct components: the frontend Python Discord b
 - **Responsibilities:**
   - Handles `/download`, `/audio`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop` slash commands.
   - Accepts authorized direct-message URLs as standard video downloads.
+  - Scans recent authorized DM history on startup for unacknowledged URL requests sent while the bot was offline.
   - Notifies the authorized user via DM when it successfully connects to Discord or gracefully shuts down.
   - Manages the lifecycle of the C++ app, including auto-launching it when the local API is unavailable.
   - Polls `GET /status` to provide live progress updates inside Discord messages.
@@ -37,6 +38,12 @@ The project is split into two distinct components: the frontend Python Discord b
 4. The bot reads the local API token and sends `POST /enqueue` with the URL and download type.
 5. The bot polls `GET /status` every few seconds and edits the original Discord message with progress.
 6. When the job completes or leaves the active queue, the bot sends a final completion message and updates queue-level tracking.
+
+## Offline DM Catch-Up
+- After Discord reports the bridge as ready, the bot sends the authorized user an online DM and reads the most recent DM messages.
+- Authorized HTTP/HTTPS URL messages are treated as missed requests when no newer bot reply in the scanned history references the same URL.
+- Missed requests are acknowledged in Discord and queued oldest-first using the same standard video download path as live DM URL requests.
+- The scan is intentionally limited to recent DM history so startup remains bounded and previously acknowledged requests are not replayed indefinitely.
 
 ## Recovery Flow
 - The bridge reads `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` for server-mode backup entries.
