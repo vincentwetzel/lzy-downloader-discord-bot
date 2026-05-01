@@ -15,4 +15,8 @@ __pycache__/
 # OS / IDE generated files
 .vscode/
 .idea/
+*.code-workspace
 .DS_Store
+
+# LzyDownloader Main Project
+/LzyDownloader/
