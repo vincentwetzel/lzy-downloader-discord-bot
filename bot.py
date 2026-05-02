@@ -294,13 +294,14 @@ async def retry_failed(interaction: discord.Interaction) -> None:
         await interaction.response.send_message("? Unauthorized.", ephemeral=True)
         return
 
+    backup_file_path = get_download_backup_path()
     retry_count = sum(
         1 for item in load_download_backup_items()
         if should_retry_backup_item(item)
     )
     if retry_count == 0:
         await interaction.response.send_message(
-            "No failed or stopped recovery jobs were found in `downloads_backup.json`.",
+            f"No failed or stopped recovery jobs were found in `{backup_file_path}`.",
             ephemeral=True
         )
         return
