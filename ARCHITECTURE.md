@@ -37,7 +37,7 @@ The project is split into two distinct components: the frontend Python Discord b
 3. If needed, the bot launches LzyDownloader with `--server --exit-after`.
 4. The bot reads the local API token and sends `POST /enqueue` with the URL and download type.
 5. The bot polls `GET /status` every few seconds and edits the original Discord message with progress.
-6. When the job completes or leaves the active queue, the bot sends a final completion message and updates queue-level tracking.
+6. When the job completes or leaves the active queue, the bot updates the original message with a final completion or failure status.
 
 ## Offline DM Catch-Up
 - After Discord reports the bridge as ready, the bot sends the authorized user an online DM and reads the most recent DM messages.

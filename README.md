@@ -28,9 +28,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 - **Lifecycle Notifications:** Sends a DM to the authorized user when the bot connects to Discord and when it gracefully shuts down.
 - **Shared Preferences:** Downloads use the same LzyDownloader preferences configured in the GUI; the bridge does not maintain a separate settings file.
 - **Live Progress Bars:** Updates Discord messages with an ASCII progress bar, ETA, download speed, and status.
-- **Duplicate Prevention:** Checks active and backed-up jobs before enqueuing so the same URL/type is not started twice.
-- **Completion Notifications:** Sends a final message when an individual download finishes, including a mention when the request came from a server channel.
-- **Queue Completion Notification:** After the last tracked item finishes, the bot sends a final confirmation that the queue is complete.
+- **Completion Status:** Updates the original Discord progress message with a final completion or failure status when the download finishes.
 - **Secure Communication:** Uses auto-generated local API tokens so only the bot can communicate with the local application.
 - **Single-Instance Guard:** Prevents accidentally running multiple bridge processes at the same time.
 - **Auto-Shutdown:** The C++ app automatically closes when the queue is finished, freeing up system resources.

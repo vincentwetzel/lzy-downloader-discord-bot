@@ -557,11 +557,100 @@ def check_api_health() -> None:
     )
 
 
+async def resume_backed_up_downloads_on_startup(
+    force: bool = False,
+    user: Any = None
+) -> None:
+    """Resumes tracking of backed up downloads or retries failed ones."""
+    global _startup_resume_started
+
+    async with _recovery_lock:
+        if not force and _startup_resume_started:
+            return
+        if not force:
+            _startup_resume_started = True
+
+        items = await asyncio.to_thread(load_download_backup_items)
+        if not items:
+            return
+
+        if force:
+            retry_items = [item for item in items if should_retry_backup_item(item)]
+            keep_items = [
+                item for item in items
+                if item.get("url") and not should_retry_backup_item(item)
+            ]
+            if not retry_items:
+                return
+
+            await asyncio.to_thread(
+                prepare_download_backup_for_recovery, retry_items, keep_items
+            )
+            target_items = retry_items
+            prefix = "🔄 **Retrying failed recovery job:**"
+            skip_enqueue = False
+        else:
+            target_items = [item for item in items if not should_retry_backup_item(item)]
+            if not target_items:
+                return
+            prefix = "🔄 **Resuming progress tracking:**"
+            skip_enqueue = True
+
+        if user is None and AUTHORIZED_USER_ID:
+            try:
+                user = await client.fetch_user(int(AUTHORIZED_USER_ID))
+            except Exception:
+                pass
+
+        if user is None:
+            return
+
+        try:
+            dm_channel = await user.create_dm()
+        except Exception as e:
+            print(f"Could not create DM channel for recovery tracking: {e}")
+            return
+
+        # Closure-safe callback factory
+        def make_cbs(m: discord.Message, c: discord.abc.Messageable):
+            async def edit_cb(new_content: str) -> None:
+                await m.edit(content=new_content)
+            async def send_cb(new_content: str) -> None:
+                await c.send(new_content)
+            return edit_cb, send_cb
+
+        for item in target_items:
+            url = str(item.get("url", ""))
+            if not url or not is_valid_url(url):
+                continue
+
+            download_type = get_backup_item_download_type(item)
+
+            try:
+                sent_msg = await dm_channel.send(
+                    f"{prefix} <{url}>\n*Connecting to LzyDownloader...*"
+                )
+                edit_msg_cb, send_msg_cb = make_cbs(sent_msg, dm_channel)
+
+                client.loop.create_task(
+                    run_download_job(
+                        url,
+                        edit_msg_cb,
+                        send_msg_cb,
+                        download_type=download_type,
+                        skip_enqueue=skip_enqueue
+                    )
+                )
+            except Exception as e:
+                print(f"Failed to start recovery task for {url}: {e}")
+
+
 async def run_download_job(
     url: str,
     edit_msg: Callable[[str], Awaitable[None]],
     send_msg: Callable[[str], Awaitable[None]],
-    download_type: str = "video"
+    download_type: str = "video",
+    skip_enqueue: bool = False
 ) -> None:
     """Enqueues a single download via the local API and polls until it finishes."""
     global _active_jobs
@@ -584,31 +673,33 @@ async def run_download_job(
         "Content-Type": "application/json",
     }
     proxies = {"http": "", "https": ""}
-    payload = {
-        "url": url, 
-        "type": download_type,
-        "download_type": download_type,
-        "options": {
-            "type": download_type
+    
+    if not skip_enqueue:
+        payload = {
+            "url": url, 
+            "type": download_type,
+            "download_type": download_type,
+            "options": {
+                "type": download_type
+            }
         }
-    }
 
-    # Enqueue the download
-    try:
-        res = await asyncio.to_thread(
-            requests.post,
-            f"{BASE_URL}/enqueue",
-            json=payload,
-            headers=headers,
-            timeout=5,
-            proxies=proxies
-        )
-        if res.status_code != 200:
-            await edit_msg(f"❌ API rejected the download: HTTP {res.status_code}\n{res.text}")
+        # Enqueue the download
+        try:
+            res = await asyncio.to_thread(
+                requests.post,
+                f"{BASE_URL}/enqueue",
+                json=payload,
+                headers=headers,
+                timeout=5,
+                proxies=proxies
+            )
+            if res.status_code != 200:
+                await edit_msg(f"❌ API rejected the download: HTTP {res.status_code}\n{res.text}")
+                return
+        except requests.exceptions.RequestException as e:
+            await edit_msg(f"❌ Failed to reach the LzyDownloader Local API.\n`{e}`")
             return
-    except requests.exceptions.RequestException as e:
-        await edit_msg(f"❌ Failed to reach the LzyDownloader Local API.\n`{e}`")
-        return
 
     async with _jobs_lock:
         _active_jobs += 1

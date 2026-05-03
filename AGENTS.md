@@ -15,7 +15,7 @@ The primary Python process (`bot.py`) that maintains a connection to the Discord
   - Reads the local bearer token from `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`.
   - Creates asynchronous tasks (`asyncio` loops) to poll the `GET /status` endpoint for progress updates.
   - Formats API responses into ASCII progress bars and updates Discord messages.
-  - Tracks active download jobs and sends final notifications when individual downloads and the entire queue complete.
+  - Tracks active download jobs and updates the original message with a final status when individual downloads complete.
   - Reads `downloads_backup.json` to resume startup work and retry or clear failed/stopped recovery jobs.
   - Archives previous backup files before recovery cleanup so recovery state is not discarded silently.
   - Uses a local single-instance lock so only one bridge process runs at a time.
