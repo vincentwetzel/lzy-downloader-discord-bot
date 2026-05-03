@@ -382,11 +382,11 @@ def load_download_backup_items() -> List[Dict[str, Any]]:
 
 
 def get_backup_item_download_type(item: Dict[str, Any]) -> str:
-    """Returns the download type stored in a backup item."""
+    """Returns the download type stored in a backup item or API response."""
     options = item.get("options")
     if isinstance(options, dict):
         return str(options.get("type") or "video")
-    return str(item.get("type") or "video")
+    return str(item.get("download_type") or item.get("type") or "video")
 
 
 def find_backup_item(url: str, download_type: str) -> Optional[Dict[str, Any]]:
@@ -584,7 +584,14 @@ async def run_download_job(
         "Content-Type": "application/json",
     }
     proxies = {"http": "", "https": ""}
-    payload = {"url": url, "type": download_type}
+    payload = {
+        "url": url, 
+        "type": download_type,
+        "download_type": download_type,
+        "options": {
+            "type": download_type
+        }
+    }
 
     # Enqueue the download
     try:
@@ -644,7 +651,7 @@ async def run_download_job(
 
             my_job = None
             for job in jobs:
-                if str(job.get("url")) == url and str(job.get("type", "video")) == download_type:
+                if str(job.get("url")) == url and get_backup_item_download_type(job) == download_type:
                     my_job = job
                     break
 
