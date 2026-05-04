@@ -8,6 +8,7 @@ import subprocess
 import requests
 import discord
 from discord import app_commands
+from aiohttp import web
 from dotenv import load_dotenv
 from urllib.parse import urlparse
 from typing import Optional, Callable, Awaitable, Any, Dict, List, Set, Tuple
@@ -74,12 +75,73 @@ class LzyBot(discord.Client):
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(intents=intents)
+        self.active_jobs: Dict[str, Dict[str, Any]] = {}
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self) -> None:
         # Sync the slash commands to Discord when the bot starts
         await self.tree.sync()
+        
+        # Start the local webhook server to listen for C++ push updates
+        app = web.Application()
+        app.router.add_post('/webhook', self.handle_webhook)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 8766)
+        await site.start()
+        print("Local webhook server listening on 127.0.0.1:8766")
+        
         print("Bot is online and slash commands are synced!")
+
+    async def handle_webhook(self, request: web.Request) -> web.Response:
+        """Handles push updates from the C++ application."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.Response(status=400, text="Invalid JSON")
+            
+        url = data.get("url")
+        if not url:
+            return web.Response(status=404, text="Job not tracked by bridge")
+            
+        dl_type = data.get("download_type")
+        if not dl_type:
+            dl_type = "video"
+            
+        job_key = f"{url}_{dl_type}"
+        
+        if job_key not in self.active_jobs:
+            # Try fuzzy matching in case the URL was resolved/redirected slightly by yt-dlp
+            found_key = None
+            for key in self.active_jobs.keys():
+                tracked_url = key.rsplit("_", 1)[0]
+                if tracked_url in url or url in tracked_url:
+                    found_key = key
+                    break
+            
+            if found_key:
+                job_key = found_key
+            else:
+                return web.Response(status=404, text="Job not tracked by bridge")
+            
+        job_data = self.active_jobs[job_key]
+        
+        status_text = data.get("status", "Processing")
+        
+        current_status = str(status_text).lower()
+        
+        if current_status in {"completed", "failed", "stopped"}:
+            job_data["is_final"] = True
+            job_data["final_status"] = current_status
+        else:
+            job_data["status_text"] = status_text
+            job_data["progress"] = data.get("progress", 0.0)
+            job_data["speed"] = data.get("speed", "")
+            job_data["eta"] = data.get("eta", "")
+            
+        job_data["last_webhook_time"] = time.time()
+            
+        return web.Response(text="OK")
 
     async def on_ready(self) -> None:
         self.loop.create_task(resume_backed_up_downloads_on_startup())
@@ -392,8 +454,9 @@ def get_backup_item_download_type(item: Dict[str, Any]) -> str:
 def find_backup_item(url: str, download_type: str) -> Optional[Dict[str, Any]]:
     """Finds a matching item in the current server-mode backup file."""
     for item in load_download_backup_items():
+        item_url = str(item.get("url", ""))
         if (
-            str(item.get("url")) == url
+            (url in item_url or item_url in url)
             and get_backup_item_download_type(item) == download_type
         ):
             return item
@@ -663,9 +726,29 @@ async def run_download_job(
             await edit_msg(f"❌ {e}")
             return
 
+    # Register the job in the dictionary BEFORE enqueueing so webhooks aren't dropped
+    job_key = f"{url}_{download_type}"
+    client.active_jobs[job_key] = {
+        "status_text": "Processing",
+        "progress": 0.0,
+        "speed": "",
+        "eta": "",
+        "is_final": False,
+        "final_status": "",
+        "last_content": "",
+        "last_webhook_time": time.time()
+    }
+
+    async with _jobs_lock:
+        _active_jobs += 1
+
     api_key = await asyncio.to_thread(get_lzy_api_key)
     if not api_key:
         await edit_msg("❌ Failed to read `api_token.txt`. The app may not have generated it.")
+        if job_key in client.active_jobs:
+            del client.active_jobs[job_key]
+        async with _jobs_lock:
+            _active_jobs = max(0, _active_jobs - 1)
         return
 
     headers = {
@@ -696,99 +779,67 @@ async def run_download_job(
             )
             if res.status_code != 200:
                 await edit_msg(f"❌ API rejected the download: HTTP {res.status_code}\n{res.text}")
+                if job_key in client.active_jobs:
+                    del client.active_jobs[job_key]
+                async with _jobs_lock:
+                    _active_jobs = max(0, _active_jobs - 1)
                 return
         except requests.exceptions.RequestException as e:
             await edit_msg(f"❌ Failed to reach the LzyDownloader Local API.\n`{e}`")
+            if job_key in client.active_jobs:
+                del client.active_jobs[job_key]
+            async with _jobs_lock:
+                _active_jobs = max(0, _active_jobs - 1)
             return
-
-    async with _jobs_lock:
-        _active_jobs += 1
-
-    last_status_message = ""
-    poll_interval = 1.5
-
+        
     try:
-        while True:
-            await asyncio.sleep(poll_interval)
-            try:
-                res = await asyncio.to_thread(
-                    requests.get,
-                    f"{BASE_URL}/status",
-                    headers=headers,
-                    timeout=5,
-                    proxies=proxies
-                )
-            except requests.exceptions.RequestException:
-                # The app might have closed successfully (e.g., 'exit after' is enabled). Check the backup file.
-                backup_item = await asyncio.to_thread(find_backup_item, url, download_type)
-                if backup_item:
-                    backup_status = str(backup_item.get("status", "")).lower()
-                    if backup_status == "completed":
-                        await edit_msg(f"✅ **Download Complete:** <{url}>")
-                    elif backup_status in {"failed", "stopped"}:
-                        await edit_msg(f"❌ **Download {backup_status.title()}:** <{url}>")
-                    else:
-                        await edit_msg(f"❌ Connection to LzyDownloader lost while processing <{url}>.")
-                else:
-                    await edit_msg(f"✅ **Download Finished:** <{url}>")
-                break
-
-            if res.status_code != 200:
-                await edit_msg(f"❌ API polling failed: HTTP {res.status_code}")
-                break
-
-            data = res.json()
-            jobs = data.get("jobs", [])
-
-            my_job = None
-            for job in jobs:
-                if str(job.get("url")) == url and get_backup_item_download_type(job) == download_type:
-                    my_job = job
-                    break
-
-            if not my_job:
-                # If it's not in the active list, check the backup queue to see if it finished or failed
-                backup_item = await asyncio.to_thread(find_backup_item, url, download_type)
-                if backup_item:
-                    backup_status = str(backup_item.get("status", "")).lower()
-                    if backup_status == "completed":
-                        await edit_msg(f"✅ **Download Complete:** <{url}>")
-                    elif backup_status in {"failed", "stopped"}:
-                        await edit_msg(f"❌ **Download {backup_status.title()}:** <{url}>")
-                    else:
-                        await edit_msg(f"⚠️ Download vanished from API but is in backup as `{backup_status}`: <{url}>")
-                else:
-                    await edit_msg(f"✅ **Download Finished:** <{url}>")
-                break
-
-            progress = my_job.get("progress", 0.0)
-            status_text = my_job.get("status", "Processing")
-            speed = my_job.get("speed", "")
-            eta = my_job.get("eta", "")
+        while job_key in client.active_jobs:
+            current_data = client.active_jobs[job_key]
             
-            # Escape markdown formatting if present in the status
-            status_text = str(status_text).replace("*", "\\*").replace("_", "\\_").replace("~", "\\~")
-
-            progress_bar = create_progress_bar(progress)
-
+            if current_data["is_final"]:
+                final_status = current_data["final_status"]
+                if final_status == "completed":
+                    final_msg = f"✅ **Download Complete:** <{url}>"
+                else:
+                    final_msg = f"❌ **Download {final_status.title()}:** <{url}>"
+                    
+                try:
+                    await edit_msg(final_msg)
+                except Exception as e:
+                    print(f"Failed to edit final message: {e}")
+                break
+                
+            # Garbage collector timeout (5 minutes without any webhook pushes)
+            if time.time() - current_data["last_webhook_time"] > 300:
+                current_data["is_final"] = True
+                current_data["final_status"] = "failed (timed out)"
+                continue
+                
+            status_text = str(current_data["status_text"]).replace("*", "\\*").replace("_", "\\_").replace("~", "\\~")
+            progress_bar = create_progress_bar(current_data["progress"])
+            
             current_message = (
                 f"⏳ **Downloading:** <{url}>\n"
                 f"**Status:** {status_text}\n"
                 f"**Progress:** {progress_bar}\n"
             )
-            if speed:
-                current_message += f"**Speed:** {speed}\n"
-            if eta:
-                current_message += f"**ETA:** {eta}\n"
-
-            if current_message != last_status_message:
+            if current_data["speed"]:
+                current_message += f"**Speed:** {current_data['speed']}\n"
+            if current_data["eta"]:
+                current_message += f"**ETA:** {current_data['eta']}\n"
+                
+            if current_message != current_data["last_content"]:
                 try:
                     await edit_msg(current_message)
-                    last_status_message = current_message
-                except discord.errors.HTTPException:
-                    pass
-
+                    current_data["last_content"] = current_message
+                except Exception as e:
+                    print(f"Failed to edit progress message: {e}")
+                    
+            await asyncio.sleep(1.5)
     finally:
+        if job_key in client.active_jobs:
+            del client.active_jobs[job_key]
+            
         async with _jobs_lock:
             _active_jobs = max(0, _active_jobs - 1)
 

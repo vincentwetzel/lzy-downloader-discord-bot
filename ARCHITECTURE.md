@@ -9,6 +9,7 @@ The project is split into two distinct components: the frontend Python Discord b
 - **Features:**
   - Exposes `POST /enqueue` to add downloads to the queue, including the requested download type (`video` or `audio`).
   - Exposes `GET /status` to retrieve active jobs with URL, title, progress, speed, ETA, and status data.
+  - Pushes real-time state changes to the Discord bot's webhook server.
   - Persists server-mode queue state in `downloads_backup.json` so interrupted or failed work can be inspected or recovered later.
 - **Server Mode:** Launched with `--server --exit-after`, allowing it to run headlessly and terminate when the download queue completes.
 - **Settings Ownership:** User preferences remain owned by the C++ app's shared `settings.ini`; the bridge does not create or modify settings files.
@@ -21,7 +22,7 @@ The project is split into two distinct components: the frontend Python Discord b
   - Scans recent authorized DM history on startup for unacknowledged URL requests sent while the bot was offline.
   - Notifies the authorized user via DM when it successfully connects to Discord or gracefully shuts down.
   - Manages the lifecycle of the C++ app, including auto-launching it when the local API is unavailable.
-  - Polls `GET /status` to provide live progress updates inside Discord messages.
+  - Hosts a local webhook server (`127.0.0.1:8766`) to receive instant, event-driven progress updates from the C++ app.
   - Tracks active download jobs so the user receives completion and queue-empty notifications.
   - Prevents duplicate bot processes by binding a local single-instance lock socket.
 
@@ -36,7 +37,7 @@ The project is split into two distinct components: the frontend Python Discord b
 2. The bot validates the URL and checks whether the local API is already healthy.
 3. If needed, the bot launches LzyDownloader with `--server --exit-after`.
 4. The bot reads the local API token and sends `POST /enqueue` with the URL and download type.
-5. The bot polls `GET /status` every few seconds and edits the original Discord message with progress.
+5. The bot receives instant webhook POST requests on `127.0.0.1:8766` and smoothly edits the original Discord message with progress.
 6. When the job completes or leaves the active queue, the bot updates the original message with a final completion or failure status.
 
 ## Offline DM Catch-Up

@@ -13,8 +13,8 @@ The primary Python process (`bot.py`) that maintains a connection to the Discord
   - Sends online and offline notification DMs to the authorized user when connecting or gracefully shutting down.
   - Checks the health of the local C++ API and launches the Download Worker if it is not running.
   - Reads the local bearer token from `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`.
-  - Creates asynchronous tasks (`asyncio` loops) to poll the `GET /status` endpoint for progress updates.
-  - Formats API responses into ASCII progress bars and updates Discord messages.
+  - Hosts an asynchronous webhook listener (`aiohttp`) to receive push updates from the C++ app.
+  - Formats webhook JSON payloads into ASCII progress bars and updates Discord messages with a debounce mechanism.
   - Tracks active download jobs and updates the original message with a final status when individual downloads complete.
   - Reads `downloads_backup.json` to resume startup work and retry or clear failed/stopped recovery jobs.
   - Archives previous backup files before recovery cleanup so recovery state is not discarded silently.
@@ -29,4 +29,5 @@ The headless instance of the LzyDownloader Qt6 application.
   - Applies the user's shared LzyDownloader GUI preferences from the main application settings.
   - Calculates speeds, ETAs, progress metrics, and job statuses.
   - Exposes these metrics over the local HTTP server (`127.0.0.1:8765`).
+  - Pushes live state changes to the Interaction Agent via an HTTP `POST` webhook (`127.0.0.1:8766/webhook`).
   - Persists server-mode queue recovery data in `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json`.
