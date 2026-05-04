@@ -30,4 +30,5 @@ The headless instance of the LzyDownloader Qt6 application.
   - Calculates speeds, ETAs, progress metrics, and job statuses.
   - Exposes these metrics over the local HTTP server (`127.0.0.1:8765`).
   - Pushes live state changes to the Interaction Agent via an HTTP `POST` webhook (`127.0.0.1:8766/webhook`).
+  - Includes `parent_id` and `url` alongside the `job_id` in its webhook payloads, allowing the bridge to map expanded child jobs back to the original Discord requests.
   - Persists server-mode queue recovery data in `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json`.

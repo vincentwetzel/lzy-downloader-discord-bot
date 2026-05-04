@@ -23,6 +23,7 @@ The project is split into two distinct components: the frontend Python Discord b
   - Notifies the authorized user via DM when it successfully connects to Discord or gracefully shuts down.
   - Manages the lifecycle of the C++ app, including auto-launching it when the local API is unavailable.
   - Hosts a local webhook server (`127.0.0.1:8766`) to receive instant, event-driven progress updates from the C++ app.
+  - **Strictly Event-Driven:** Polling the local API (e.g., `GET /status`) for live progress updates is explicitly forbidden. All state tracking must rely solely on the push updates provided by the webhook server.
   - Tracks active download jobs so the user receives completion and queue-empty notifications.
   - Prevents duplicate bot processes by binding a local single-instance lock socket.
 
@@ -37,7 +38,8 @@ The project is split into two distinct components: the frontend Python Discord b
 2. The bot validates the URL and checks whether the local API is already healthy.
 3. If needed, the bot launches LzyDownloader with `--server --exit-after`.
 4. The bot reads the local API token and sends `POST /enqueue` with the URL and download type.
-5. The bot receives instant webhook POST requests on `127.0.0.1:8766` and smoothly edits the original Discord message with progress.
+5. The bot receives instant webhook POST requests on `127.0.0.1:8766` and smoothly edits the original Discord message with progress. (Polling is strictly prohibited).
+   - *Note on URL Expansion:* If LzyDownloader expands a URL or playlist (which spawns a child item with a new internal ID), the bot dynamically routes the incoming webhook payloads back to the original tracked job using `parent_id` or fuzzy URL matching.
 6. When the job completes or leaves the active queue, the bot updates the original message with a final completion or failure status.
 
 ## Offline DM Catch-Up

@@ -1,4 +1,5 @@
 import os
+import re
 import asyncio
 import json
 import socket
@@ -57,9 +58,11 @@ def is_valid_url(url: str) -> bool:
     except Exception:
         return False
 
-def create_progress_bar(progress: float, length: int = 20) -> str:
+def create_progress_bar(progress: Any, length: int = 20) -> str:
     """Generates an ASCII progress bar for Discord messages."""
     try:
+        if isinstance(progress, str):
+            progress = progress.replace("%", "").strip()
         progress_val = float(progress)
     except (ValueError, TypeError):
         progress_val = 0.0
@@ -97,47 +100,82 @@ class LzyBot(discord.Client):
         """Handles push updates from the C++ application."""
         try:
             data = await request.json()
-        except Exception:
+            print(f"[Webhook IN] {data}")
+        except Exception as e:
+            print(f"[Webhook ERROR] Failed to parse JSON: {e}")
             return web.Response(status=400, text="Invalid JSON")
             
-        url = data.get("url")
-        if not url:
-            return web.Response(status=404, text="Job not tracked by bridge")
-            
-        dl_type = data.get("download_type")
-        if not dl_type:
-            dl_type = "video"
-            
-        job_key = f"{url}_{dl_type}"
+        # Catch multiple common casing formats just in case
+        job_key = data.get("job_id") or data.get("id") or data.get("jobId") or data.get("lzy_id")
+        if not job_key:
+            print("[Webhook ERROR] Rejected payload: Missing job ID.")
+            return web.Response(status=400, text="Missing job_id in webhook payload")
+        
+        job_key = str(job_key)
         
         if job_key not in self.active_jobs:
-            # Try fuzzy matching in case the URL was resolved/redirected slightly by yt-dlp
+            # The C++ app might have expanded a URL and changed the job ID (e.g., PlaylistExpander).
+            # Attempt to re-key the job using parent_id or fuzzy URL matching.
+            webhook_parent = data.get("parent_id")
+            webhook_url = data.get("url", "")
             found_key = None
-            for key in self.active_jobs.keys():
-                tracked_url = key.rsplit("_", 1)[0]
-                if tracked_url in url or url in tracked_url:
-                    found_key = key
-                    break
+            
+            if webhook_parent and str(webhook_parent) in self.active_jobs:
+                found_key = str(webhook_parent)
+            elif webhook_url:
+                def normalize_url(u: str) -> str:
+                    return re.sub(r"^https?://(www\.)?", "", u).rstrip("/")
+                    
+                incoming_norm = normalize_url(webhook_url)
+                yt_id_incoming = None
+                if "youtu" in webhook_url:
+                    m = re.search(r"(?:youtu\.be/|v=|/shorts/|/live/)([0-9A-Za-z_-]{11})(?:\?|&|/|$)", webhook_url)
+                    if m:
+                        yt_id_incoming = m.group(1)
+                        
+                for existing_key, existing_data in list(self.active_jobs.items()):
+                    tracked_url = existing_data.get("url", "")
+                    
+                    if yt_id_incoming and "youtu" in tracked_url:
+                        m2 = re.search(r"(?:youtu\.be/|v=|/shorts/|/live/)([0-9A-Za-z_-]{11})(?:\?|&|/|$)", tracked_url)
+                        if m2 and m2.group(1) == yt_id_incoming:
+                            found_key = existing_key
+                            break
+                            
+                    tracked_norm = normalize_url(tracked_url)
+                    if tracked_norm and (tracked_norm in incoming_norm or incoming_norm in tracked_norm):
+                        found_key = existing_key
+                        break
             
             if found_key:
+                print(f"[Webhook] Routing child ID {job_key} updates to parent job {found_key}")
                 job_key = found_key
             else:
+                print(f"[Webhook ERROR] Rejected payload: Job {job_key} not tracked by bridge.")
                 return web.Response(status=404, text="Job not tracked by bridge")
             
         job_data = self.active_jobs[job_key]
         
-        status_text = data.get("status", "Processing")
-        
-        current_status = str(status_text).lower()
-        
-        if current_status in {"completed", "failed", "stopped"}:
+        # Only update fields that are actually provided in this specific webhook payload
+        if "status" in data and data["status"]:
+            job_data["status_text"] = data["status"]
+            
+        if "progress" in data and data["progress"] is not None:
+            job_data["progress"] = data["progress"]
+            
+        if "speed" in data and data["speed"] is not None:
+            job_data["speed"] = data["speed"]
+            
+        if "eta" in data and data["eta"] is not None:
+            job_data["eta"] = data["eta"]
+            
+        if "title" in data and data["title"]:
+            job_data["title"] = data["title"]
+            
+        current_status = str(job_data["status_text"]).lower()
+        if current_status in {"completed", "complete", "failed", "stopped", "finished", "error"}:
             job_data["is_final"] = True
             job_data["final_status"] = current_status
-        else:
-            job_data["status_text"] = status_text
-            job_data["progress"] = data.get("progress", 0.0)
-            job_data["speed"] = data.get("speed", "")
-            job_data["eta"] = data.get("eta", "")
             
         job_data["last_webhook_time"] = time.time()
             
@@ -701,7 +739,8 @@ async def resume_backed_up_downloads_on_startup(
                         edit_msg_cb,
                         send_msg_cb,
                         download_type=download_type,
-                        skip_enqueue=skip_enqueue
+                        skip_enqueue=skip_enqueue,
+                        job_id=job_id
                     )
                 )
             except Exception as e:
@@ -713,7 +752,8 @@ async def run_download_job(
     edit_msg: Callable[[str], Awaitable[None]],
     send_msg: Callable[[str], Awaitable[None]],
     download_type: str = "video",
-    skip_enqueue: bool = False
+    skip_enqueue: bool = False,
+    job_id: Optional[str] = None
 ) -> None:
     """Enqueues a single download via the local API and polls until it finishes."""
     global _active_jobs
@@ -726,29 +766,9 @@ async def run_download_job(
             await edit_msg(f"❌ {e}")
             return
 
-    # Register the job in the dictionary BEFORE enqueueing so webhooks aren't dropped
-    job_key = f"{url}_{download_type}"
-    client.active_jobs[job_key] = {
-        "status_text": "Processing",
-        "progress": 0.0,
-        "speed": "",
-        "eta": "",
-        "is_final": False,
-        "final_status": "",
-        "last_content": "",
-        "last_webhook_time": time.time()
-    }
-
-    async with _jobs_lock:
-        _active_jobs += 1
-
     api_key = await asyncio.to_thread(get_lzy_api_key)
     if not api_key:
         await edit_msg("❌ Failed to read `api_token.txt`. The app may not have generated it.")
-        if job_key in client.active_jobs:
-            del client.active_jobs[job_key]
-        async with _jobs_lock:
-            _active_jobs = max(0, _active_jobs - 1)
         return
 
     headers = {
@@ -779,29 +799,53 @@ async def run_download_job(
             )
             if res.status_code != 200:
                 await edit_msg(f"❌ API rejected the download: HTTP {res.status_code}\n{res.text}")
-                if job_key in client.active_jobs:
-                    del client.active_jobs[job_key]
-                async with _jobs_lock:
-                    _active_jobs = max(0, _active_jobs - 1)
                 return
+                
+            try:
+                res_data = res.json()
+                job_key = res_data.get("job_id") or res_data.get("id")
+            except ValueError:
+                job_key = None
+                
+            if not job_key:
+                await edit_msg("❌ API response missing 'job_id'. Please update the C++ backend.")
+                return
+                
+            job_key = str(job_key)
+            
         except requests.exceptions.RequestException as e:
             await edit_msg(f"❌ Failed to reach the LzyDownloader Local API.\n`{e}`")
-            if job_key in client.active_jobs:
-                del client.active_jobs[job_key]
-            async with _jobs_lock:
-                _active_jobs = max(0, _active_jobs - 1)
             return
         
+    client.active_jobs[job_key] = {
+        "url": url,
+        "status_text": "Processing",
+        "progress": 0.0,
+        "speed": "",
+        "eta": "",
+        "title": "",
+        "is_final": False,
+        "final_status": "",
+        "last_content": "",
+        "last_webhook_time": time.time()
+    }
+
+    async with _jobs_lock:
+        _active_jobs += 1
+
     try:
         while job_key in client.active_jobs:
             current_data = client.active_jobs[job_key]
             
             if current_data["is_final"]:
                 final_status = current_data["final_status"]
-                if final_status == "completed":
-                    final_msg = f"✅ **Download Complete:** <{url}>"
+                display_title = current_data.get("title")
+                title_str = f"**{display_title}**" if display_title else f"<{url}>"
+                
+                if final_status in {"completed", "complete", "finished"}:
+                    final_msg = f"✅ **Download Complete:** {title_str}"
                 else:
-                    final_msg = f"❌ **Download {final_status.title()}:** <{url}>"
+                    final_msg = f"❌ **Download {final_status.title()}:** {title_str}"
                     
                 try:
                     await edit_msg(final_msg)
@@ -818,8 +862,11 @@ async def run_download_job(
             status_text = str(current_data["status_text"]).replace("*", "\\*").replace("_", "\\_").replace("~", "\\~")
             progress_bar = create_progress_bar(current_data["progress"])
             
+            display_title = current_data.get("title")
+            title_str = f"**{display_title}**" if display_title else f"<{url}>"
+            
             current_message = (
-                f"⏳ **Downloading:** <{url}>\n"
+                f"⏳ **Downloading:** {title_str}\n"
                 f"**Status:** {status_text}\n"
                 f"**Progress:** {progress_bar}\n"
             )

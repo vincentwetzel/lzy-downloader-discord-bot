@@ -23,6 +23,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 - **Offline DM Catch-Up:** On startup, the bot checks recent authorized DM history for URL requests it missed while offline and starts any unacknowledged requests oldest-first.
 - **Auto-Launching:** If the LzyDownloader app is closed, the bot automatically launches it silently in headless server mode (`--server --exit-after`).
 - **Startup Recovery:** If server-mode downloads were saved in `downloads_backup.json`, the bot can relaunch LzyDownloader and resume progress tracking on startup.
+- **Dynamic URL Expansion:** Seamlessly maps internal ID changes from URL expansions (e.g., YouTube Shorts or playlists) back to the original Discord request to keep the UI perfectly synced.
 - **Failed Job Recovery:** Failed or stopped backup entries can be retried without restarting the bot, or cleared after archiving the previous backup file.
 - **Backup Archiving:** Recovery and clear operations preserve old `downloads_backup.json` files as `.bak` archives and prune older bridge-created archives.
 - **Lifecycle Notifications:** Sends a DM to the authorized user when the bot connects to Discord and when it gracefully shuts down.
