@@ -726,6 +726,7 @@ async def resume_backed_up_downloads_on_startup(
                 continue
 
             download_type = get_backup_item_download_type(item)
+            job_id = str(item.get("job_id") or item.get("id") or item.get("jobId") or item.get("lzy_id") or "")
 
             try:
                 sent_msg = await dm_channel.send(
@@ -816,6 +817,11 @@ async def run_download_job(
         except requests.exceptions.RequestException as e:
             await edit_msg(f"❌ Failed to reach the LzyDownloader Local API.\n`{e}`")
             return
+    else:
+        if not job_id:
+            await edit_msg("❌ Missing job_id for resumed download.")
+            return
+        job_key = str(job_id)
         
     client.active_jobs[job_key] = {
         "url": url,
