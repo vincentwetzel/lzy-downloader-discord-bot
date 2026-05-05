@@ -8,11 +8,11 @@ Instead of baking heavy Discord SDKs directly into the C++ desktop app, LzyDownl
 ## Available Commands
 *Project Requirement: This list must be kept updated as new commands are added to the bot.*
 - `/audio <url>` - Start a new audio-only download.
-- `/clear_failed` - Clear failed or stopped recovery jobs from `downloads_backup.json`.
+- `/clear_failed` - Clear inactive recovery jobs (failed, stopped, errored, or completed) from `downloads_backup.json`.
 - `/download <url>` - Start a new standard video download.
 - `/help` - List all available commands.
 - `/ping` - Ping the bot to check its status.
-- `/retry_failed` - Retry failed or stopped recovery jobs from `downloads_backup.json`.
+- `/retry_failed` - Retry failed, stopped, or errored recovery jobs from `downloads_backup.json`.
 - `/stop` - Gracefully shut down the Discord bot.
 
 Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard video download without using a slash command. In DMs, send `ping` to verify that the bot is online.
@@ -22,17 +22,19 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 - **Direct Message Downloads:** Send the bot a URL in DMs to enqueue a download from anywhere Discord is available.
 - **Offline DM Catch-Up:** On startup, the bot checks recent authorized DM history for URL requests it missed while offline and starts any unacknowledged requests oldest-first.
 - **Auto-Launching:** If the LzyDownloader app is closed, the bot automatically launches it silently in headless server mode (`--server --exit-after`).
-- **Startup Recovery:** If server-mode downloads were saved in `downloads_backup.json`, the bot can relaunch LzyDownloader and resume progress tracking on startup.
+- **Startup Recovery:** If server-mode downloads were saved in `downloads_backup.json`, the bot can relaunch LzyDownloader, prune completed backup entries, and resume progress tracking on startup.
 - **Dynamic URL Expansion:** Seamlessly maps internal ID changes from URL expansions (e.g., YouTube Shorts or playlists) back to the original Discord request to keep the UI perfectly synced.
-- **Failed Job Recovery:** Failed or stopped backup entries can be retried without restarting the bot, or cleared after archiving the previous backup file.
+- **Failed Job Recovery:** Failed, stopped, or errored backup entries can be retried without restarting the bot.
+- **Inactive Job Cleanup:** Failed, stopped, errored, and completed backup entries can be cleared after archiving the previous backup file.
 - **Backup Archiving:** Recovery and clear operations preserve old `downloads_backup.json` files as `.bak` archives and prune older bridge-created archives.
 - **Lifecycle Notifications:** Sends a DM to the authorized user when the bot connects to Discord and when it gracefully shuts down.
 - **Shared Preferences:** Downloads use the same LzyDownloader preferences configured in the GUI; the bridge does not maintain a separate settings file.
 - **Live Progress Bars:** Updates Discord messages with an ASCII progress bar, ETA, download speed, and status.
 - **Completion Status:** Updates the original Discord progress message with a final completion or failure status when the download finishes.
+- **Message Sanitization:** Safely escapes markdown and spoiler tags from dynamic content (like video titles and status text) to ensure clean formatting in the Discord UI.
 - **Secure Communication:** Uses auto-generated local API tokens so only the bot can communicate with the local application.
 - **Single-Instance Guard:** Prevents accidentally running multiple bridge processes at the same time.
-- **Auto-Shutdown:** The C++ app automatically closes when the queue is finished, freeing up system resources.
+- **Auto-Shutdown & Cleanup:** The C++ app automatically closes when the queue is finished. If the bot crashes or is stopped, any lingering headless C++ processes are terminated to prevent orphaned background work.
 
 ## Prerequisites
 - Python 3.8+
@@ -81,7 +83,7 @@ Once the bot is online, open Discord and run:
 /audio url:https://www.youtube.com/watch?v=...
 ```
 
-The bot starts the download locally on your PC and reports progress in Discord. Use `/retry_failed` to requeue failed or stopped recovery jobs, and `/clear_failed` to remove those failed/stopped backup entries after archiving the previous backup.
+The bot starts the download locally on your PC and reports progress in Discord. Use `/retry_failed` to requeue failed, stopped, or errored recovery jobs, and `/clear_failed` to remove inactive backup entries after archiving the previous backup.
 
 ## Runtime Files
 - API token: `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`

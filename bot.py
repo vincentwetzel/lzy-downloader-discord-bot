@@ -6,6 +6,7 @@ import socket
 import sys
 import time
 import subprocess
+import atexit
 import requests
 import discord
 from discord import app_commands
@@ -36,6 +37,7 @@ _active_jobs: int = 0
 _jobs_lock: asyncio.Lock = asyncio.Lock()
 _startup_resume_started: bool = False
 _recovery_lock: asyncio.Lock = asyncio.Lock()
+_lzy_process: Optional[subprocess.Popen] = None
 
 def enforce_single_instance() -> None:
     """Binds a local UDP socket to prevent multiple instances of the bot."""
@@ -49,6 +51,19 @@ def enforce_single_instance() -> None:
             "is already running. Exiting."
         )
         sys.exit(1)
+
+def cleanup_subprocess() -> None:
+    """Ensures the headless LzyDownloader process is terminated when the bot exits."""
+    global _lzy_process
+    if _lzy_process and _lzy_process.poll() is None:
+        print("🛑 Terminating headless LzyDownloader process...")
+        try:
+            _lzy_process.terminate()
+            _lzy_process.wait(timeout=3)
+        except Exception:
+            pass
+
+atexit.register(cleanup_subprocess)
 
 def is_valid_url(url: str) -> bool:
     """Validates that a string is a properly formatted HTTP/HTTPS URL."""
@@ -236,6 +251,7 @@ class LzyBot(discord.Client):
                 await user.send("🔴 **LzyDownloader Discord Bridge is now offline.**")
             except Exception as e:
                 print(f"Failed to send shutdown DM: {e}")
+        cleanup_subprocess()
         await super().close()
 
     async def on_message(self, message: discord.Message) -> None:
@@ -364,19 +380,19 @@ async def audio(interaction: discord.Interaction, url: str) -> None:
 @client.tree.command(name="clear_failed", description="Clear failed recovery jobs from the backup file")
 async def clear_failed(interaction: discord.Interaction) -> None:
     if str(interaction.user.id) != AUTHORIZED_USER_ID:
-        await interaction.response.send_message("? Unauthorized.", ephemeral=True)
+        await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
         return
 
     removed_count, kept_count, archive_path = clear_failed_backup_items()
     if removed_count == 0:
         await interaction.response.send_message(
-            "No failed or stopped recovery jobs were found in `downloads_backup.json`.",
+            "No inactive (failed/stopped/completed) recovery jobs were found in `downloads_backup.json`.",
             ephemeral=True
         )
         return
 
     message = (
-        f"Cleared {removed_count} failed/stopped recovery job(s) from "
+        f"Cleared {removed_count} inactive job(s) from "
         "`downloads_backup.json`."
     )
     if kept_count:
@@ -391,7 +407,7 @@ async def clear_failed(interaction: discord.Interaction) -> None:
 @client.tree.command(name="retry_failed", description="Retry failed recovery jobs without restarting the bot")
 async def retry_failed(interaction: discord.Interaction) -> None:
     if str(interaction.user.id) != AUTHORIZED_USER_ID:
-        await interaction.response.send_message("? Unauthorized.", ephemeral=True)
+        await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
         return
 
     backup_file_path = get_download_backup_path()
@@ -509,10 +525,36 @@ def should_retry_backup_item(item: Dict[str, Any]) -> bool:
         options = {}
 
     return bool(item.get("url")) and (
-        status in {"stopped", "failed"}
+        status in {"stopped", "failed", "error"}
         or bool(options.get("is_failed"))
         or bool(options.get("is_stopped"))
     )
+
+def is_completed_backup_item(item: Dict[str, Any]) -> bool:
+    """Returns true for backed-up items that have already completed."""
+    status = str(item.get("status", "")).lower()
+    options = item.get("options")
+    if not isinstance(options, dict):
+        options = {}
+
+    if status in {"error", "failed", "stopped"}:
+        return False
+    if bool(options.get("is_failed")) or bool(options.get("is_stopped")):
+        return False
+
+    if status in {"completed", "complete", "finished", "downloaded", "done", "success"}:
+        return True
+    if bool(options.get("is_finished")) or bool(options.get("is_completed")):
+        return True
+
+    progress = item.get("progress")
+    try:
+        if progress is not None and float(progress) >= 100.0:
+            return True
+    except (ValueError, TypeError):
+        pass
+
+    return False
 
 
 def prepare_download_backup_for_recovery(
@@ -553,11 +595,12 @@ def clear_failed_backup_items() -> Tuple[int, int, Optional[str]]:
         return 0, 0, None
 
     failed_items = [item for item in items if should_retry_backup_item(item)]
+    completed_items = [item for item in items if is_completed_backup_item(item)]
     kept_items = [
         item for item in items
-        if item.get("url") and not should_retry_backup_item(item)
+        if item.get("url") and not should_retry_backup_item(item) and not is_completed_backup_item(item)
     ]
-    if not failed_items:
+    if not failed_items and not completed_items:
         return 0, len(kept_items), None
 
     stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -575,13 +618,15 @@ def clear_failed_backup_items() -> Tuple[int, int, Optional[str]]:
                 json.dump(kept_items, f, indent=4)
         except OSError as e:
             print(f"Could not rewrite remaining backup items: {e}")
-            return len(failed_items), len(kept_items), archive_path
+            return len(failed_items) + len(completed_items), len(kept_items), archive_path
 
-    return len(failed_items), len(kept_items), archive_path
+    return len(failed_items) + len(completed_items), len(kept_items), archive_path
 
 
 def check_api_health() -> None:
     """Checks if the Local API is responding. If not, launches the app and waits for it."""
+    global _lzy_process
+
     proxies = {"http": "", "https": ""}
 
     # First, try a quick ping to see if it's already running
@@ -619,7 +664,7 @@ def check_api_health() -> None:
     app_dir = os.path.dirname(LZY_EXECUTABLE_PATH)
     # CREATE_NO_WINDOW flag prevents a console from flashing on Windows
     creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-    process = subprocess.Popen(
+    _lzy_process = subprocess.Popen(
         [LZY_EXECUTABLE_PATH, "--server", "--exit-after"], 
         cwd=app_dir, 
         creationflags=creation_flags
@@ -630,9 +675,9 @@ def check_api_health() -> None:
     for _ in range(20):  # Poll for up to 20 seconds
         time.sleep(1)
         
-        if process.poll() is not None:
+        if _lzy_process.poll() is not None:
             raise RuntimeError(
-                f"**LzyDownloader crashed or closed immediately.** Exit code: {process.returncode}.\n"
+                f"**LzyDownloader crashed or closed immediately.** Exit code: {_lzy_process.returncode}.\n"
                 "Try running the .exe manually in a command prompt to check for missing DLLs."
             )
 
@@ -679,7 +724,7 @@ async def resume_backed_up_downloads_on_startup(
             retry_items = [item for item in items if should_retry_backup_item(item)]
             keep_items = [
                 item for item in items
-                if item.get("url") and not should_retry_backup_item(item)
+                if item.get("url") and not should_retry_backup_item(item) and not is_completed_backup_item(item)
             ]
             if not retry_items:
                 return
@@ -691,7 +736,23 @@ async def resume_backed_up_downloads_on_startup(
             prefix = "🔄 **Retrying failed recovery job:**"
             skip_enqueue = False
         else:
-            target_items = [item for item in items if not should_retry_backup_item(item)]
+            # Automatically prune completed jobs from the backup file on startup
+            completed_items = [item for item in items if is_completed_backup_item(item)]
+            if completed_items:
+                keep_startup_items = [item for item in items if not is_completed_backup_item(item)]
+                try:
+                    def _prune_startup():
+                        with open(get_download_backup_path(), 'w', encoding='utf-8') as f:
+                            json.dump(keep_startup_items, f, indent=4)
+                    await asyncio.to_thread(_prune_startup)
+                    print(f"Pruned {len(completed_items)} completed item(s) from backup on startup.")
+                except Exception as e:
+                    print(f"Could not prune completed items on startup: {e}")
+
+            target_items = [
+                item for item in items 
+                if not should_retry_backup_item(item) and not is_completed_backup_item(item) and item.get("url")
+            ]
             if not target_items:
                 return
             prefix = "🔄 **Resuming progress tracking:**"
@@ -787,6 +848,9 @@ async def run_download_job(
                 "type": download_type
             }
         }
+        
+        if job_id:
+            payload["job_id"] = job_id
 
         # Enqueue the download
         try:
@@ -799,7 +863,11 @@ async def run_download_job(
                 proxies=proxies
             )
             if res.status_code != 200:
-                await edit_msg(f"❌ API rejected the download: HTTP {res.status_code}\n{res.text}")
+                raw_err = res.text
+                if len(raw_err) > 500:
+                    raw_err = raw_err[:497] + "..."
+                safe_text = discord.utils.escape_markdown(raw_err).replace("|", "\\|")
+                await edit_msg(f"❌ API rejected the download: HTTP {res.status_code}\n{safe_text}")
                 return
                 
             try:
@@ -846,12 +914,19 @@ async def run_download_job(
             if current_data["is_final"]:
                 final_status = current_data["final_status"]
                 display_title = current_data.get("title")
-                title_str = f"**{display_title}**" if display_title else f"<{url}>"
+                if display_title:
+                    if len(display_title) > 200:
+                        display_title = display_title[:197] + "..."
+                    display_title = discord.utils.escape_markdown(display_title).replace("|", "\\|")
+                title_str = f"**{display_title}**\n<{url}>" if display_title else f"<{url}>"
                 
                 if final_status in {"completed", "complete", "finished"}:
                     final_msg = f"✅ **Download Complete:** {title_str}"
                 else:
                     final_msg = f"❌ **Download {final_status.title()}:** {title_str}"
+                    
+                if len(final_msg) > 1950:
+                    final_msg = final_msg[:1950] + "...\n[Message Truncated]"
                     
                 try:
                     await edit_msg(final_msg)
@@ -865,10 +940,17 @@ async def run_download_job(
                 current_data["final_status"] = "failed (timed out)"
                 continue
                 
-            status_text = str(current_data["status_text"]).replace("*", "\\*").replace("_", "\\_").replace("~", "\\~")
+            raw_status = str(current_data["status_text"])
+            if len(raw_status) > 200:
+                raw_status = raw_status[:197] + "..."
+            status_text = discord.utils.escape_markdown(raw_status).replace("|", "\\|")
             progress_bar = create_progress_bar(current_data["progress"])
             
             display_title = current_data.get("title")
+            if display_title:
+                if len(display_title) > 200:
+                    display_title = display_title[:197] + "..."
+                display_title = discord.utils.escape_markdown(display_title).replace("|", "\\|")
             title_str = f"**{display_title}**" if display_title else f"<{url}>"
             
             current_message = (
@@ -880,6 +962,9 @@ async def run_download_job(
                 current_message += f"**Speed:** {current_data['speed']}\n"
             if current_data["eta"]:
                 current_message += f"**ETA:** {current_data['eta']}\n"
+                
+            if len(current_message) > 1950:
+                current_message = current_message[:1950] + "...\n[Message Truncated]"
                 
             if current_message != current_data["last_content"]:
                 try:

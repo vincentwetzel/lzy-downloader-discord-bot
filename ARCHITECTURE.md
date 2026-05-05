@@ -21,11 +21,12 @@ The project is split into two distinct components: the frontend Python Discord b
   - Accepts authorized direct-message URLs as standard video downloads.
   - Scans recent authorized DM history on startup for unacknowledged URL requests sent while the bot was offline.
   - Notifies the authorized user via DM when it successfully connects to Discord or gracefully shuts down.
-  - Manages the lifecycle of the C++ app, including auto-launching it when the local API is unavailable.
+  - Manages the lifecycle of the C++ app, including auto-launching it when the local API is unavailable and forcefully terminating it when the bridge shuts down.
   - Hosts a local webhook server (`127.0.0.1:8766`) to receive instant, event-driven progress updates from the C++ app.
   - **Strictly Event-Driven:** Polling the local API (e.g., `GET /status`) for live progress updates is explicitly forbidden. All state tracking must rely solely on the push updates provided by the webhook server.
   - Tracks active download jobs so the user receives completion and queue-empty notifications.
   - Prevents duplicate bot processes by binding a local single-instance lock socket.
+  - Sanitizes dynamic data (video titles, API errors, status texts) from the C++ API to prevent unintended Discord markdown or spoiler formatting.
 
 ## Security & Authentication
 - **Local Bind Only:** The C++ API server only listens on localhost (`127.0.0.1`), preventing external network access.
@@ -51,9 +52,10 @@ The project is split into two distinct components: the frontend Python Discord b
 ## Recovery Flow
 - The bridge reads `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` for server-mode backup entries.
 - Queued resumable entries can be resumed after startup by relaunching LzyDownloader and reattaching Discord progress tracking.
-- Failed or stopped entries are treated as stranded jobs and are not assumed to auto-run safely.
-- `/retry_failed` archives the previous backup, preserves still-queued resumable entries, and re-enqueues failed or stopped URLs for fresh tracking.
-- `/clear_failed` archives the previous backup and rewrites the backup file with only resumable queued entries.
+- Failed, stopped, or errored entries are treated as stranded jobs and are not assumed to auto-run safely.
+- Completed entries are pruned from the backup file during startup recovery so they do not linger as resumable work.
+- `/retry_failed` archives the previous backup, preserves still-queued resumable entries, and re-enqueues failed, stopped, or errored URLs for fresh tracking.
+- `/clear_failed` archives the previous backup and rewrites the backup file with only resumable queued entries, removing failed, stopped, errored, and completed entries.
 - Bridge-created archive files use names like `downloads_backup.json.discord_recovery_<timestamp>.bak` and `downloads_backup.json.cleared_failed_<timestamp>.bak`.
 
 ## Runtime Files
