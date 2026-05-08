@@ -859,7 +859,7 @@ async def run_download_job(
                 f"{BASE_URL}/enqueue",
                 json=payload,
                 headers=headers,
-                timeout=5,
+                timeout=30,
                 proxies=proxies
             )
             if res.status_code != 200:
