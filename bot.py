@@ -175,6 +175,9 @@ class LzyBot(discord.Client):
         if "status" in data and data["status"]:
             job_data["status_text"] = data["status"]
             
+        if "queue_position" in data:
+            job_data["queue_position"] = data["queue_position"]
+            
         if "progress" in data and data["progress"] is not None:
             job_data["progress"] = data["progress"]
             
@@ -894,6 +897,7 @@ async def run_download_job(
     client.active_jobs[job_key] = {
         "url": url,
         "status_text": "Processing",
+        "queue_position": None,
         "progress": 0.0,
         "speed": "",
         "eta": "",
@@ -941,6 +945,8 @@ async def run_download_job(
                 continue
                 
             raw_status = str(current_data["status_text"])
+            if current_data.get("queue_position") is not None and current_data.get("queue_position") > 0:
+                raw_status += f" (Position: {current_data['queue_position']})"
             if len(raw_status) > 200:
                 raw_status = raw_status[:197] + "..."
             status_text = discord.utils.escape_markdown(raw_status).replace("|", "\\|")
