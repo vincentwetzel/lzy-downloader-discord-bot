@@ -29,7 +29,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 - **Backup Archiving:** Recovery and clear operations preserve old `downloads_backup.json` files as `.bak` archives and prune older bridge-created archives.
 - **Lifecycle Notifications:** Sends a DM to the authorized user when the bot connects to Discord and when it gracefully shuts down.
 - **Shared Preferences:** Downloads use the same LzyDownloader preferences configured in the GUI; the bridge does not maintain a separate settings file.
-- **Live Progress Bars:** Updates Discord messages with an ASCII progress bar, ETA, download speed, and status.
+- **Live Progress Bars:** Updates Discord messages with an ASCII progress bar, ETA, download speed, dynamic queue position, and status.
 - **Completion Status:** Updates the original Discord progress message with a final completion or failure status when the download finishes.
 - **Message Sanitization:** Safely escapes markdown and spoiler tags from dynamic content (like video titles and status text) to ensure clean formatting in the Discord UI.
 - **Secure Communication:** Uses auto-generated local API tokens so only the bot can communicate with the local application.

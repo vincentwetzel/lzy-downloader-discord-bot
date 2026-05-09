@@ -14,7 +14,7 @@ The primary Python process (`bot.py`) that maintains a connection to the Discord
   - Checks the health of the local C++ API, launches the Download Worker if it is not running, and ensures it is properly terminated when the bridge shuts down.
   - Reads the local bearer token from `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`.
   - Hosts an asynchronous webhook listener (`aiohttp`) to receive push updates from the C++ app.
-  - Formats webhook JSON payloads into ASCII progress bars and updates Discord messages with a debounce mechanism.
+  - Formats webhook JSON payloads into ASCII progress bars, displays real-time queue positions, and updates Discord messages with a debounce mechanism.
   - Tracks active download jobs and updates the original message with a final status when individual downloads complete.
   - Sanitizes dynamic webhook text (like titles and status updates) to prevent accidental Discord markdown rendering.
   - Reads `downloads_backup.json` to resume startup work, prune completed backup entries, and retry or clear inactive recovery jobs.

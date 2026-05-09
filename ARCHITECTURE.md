@@ -39,7 +39,7 @@ The project is split into two distinct components: the frontend Python Discord b
 2. The bot validates the URL and checks whether the local API is already healthy.
 3. If needed, the bot launches LzyDownloader with `--server --exit-after`.
 4. The bot reads the local API token and sends `POST /enqueue` with the URL and download type.
-5. The bot receives instant webhook POST requests on `127.0.0.1:8766` and smoothly edits the original Discord message with progress. (Polling is strictly prohibited).
+5. The bot receives instant webhook POST requests on `127.0.0.1:8766` and smoothly edits the original Discord message with progress, including the job's active queue position. (Polling is strictly prohibited).
    - *Note on URL Expansion:* If LzyDownloader expands a URL or playlist (which spawns a child item with a new internal ID), the bot dynamically routes the incoming webhook payloads back to the original tracked job using `parent_id` or fuzzy URL matching.
 6. When the job completes or leaves the active queue, the bot updates the original message with a final completion or failure status.
 
