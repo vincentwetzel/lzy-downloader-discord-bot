@@ -938,8 +938,8 @@ async def run_download_job(
                     print(f"Failed to edit final message: {e}")
                 break
                 
-            # Garbage collector timeout (5 minutes without any webhook pushes)
-            if time.time() - current_data["last_webhook_time"] > 300:
+            # Garbage collector timeout (12 hours without any webhook pushes)
+            if time.time() - current_data["last_webhook_time"] > 43200:
                 current_data["is_final"] = True
                 current_data["final_status"] = "failed (timed out)"
                 continue
