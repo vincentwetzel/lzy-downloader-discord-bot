@@ -25,7 +25,7 @@ AUTHORIZED_USER_ID: Optional[str] = os.getenv('AUTHORIZED_USER_ID')
 # LzyDownloader Local API Settings
 API_PORT: int = 8765
 BASE_URL: str = f"http://127.0.0.1:{API_PORT}"
-BACKUP_ARCHIVE_RETENTION: int = 5
+BACKUP_ARCHIVE_RETENTION: int = 2
 
 # Load from .env
 LZY_EXECUTABLE_PATH: Optional[str] = os.getenv('LZY_EXECUTABLE_PATH')
