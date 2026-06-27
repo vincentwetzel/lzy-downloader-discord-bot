@@ -30,13 +30,13 @@ BACKUP_ARCHIVE_RETENTION: int = 2
 # Load from .env
 LZY_EXECUTABLE_PATH: Optional[str] = os.getenv('LZY_EXECUTABLE_PATH')
 
+# Pre-compiled regexes for high-frequency webhook parsing
+YOUTUBE_ID_REGEX = re.compile(r"(?:youtu\.be/|v=|/shorts/|/live/)([0-9A-Za-z_-]{11})(?:\?|&|/|$)")
+NORMALIZE_URL_REGEX = re.compile(r"^https?://(www\.)?")
+QUEUE_POSITION_REGEX = re.compile(r"\s*\(Position:?\s*\d+\)", re.IGNORECASE)
+
 # Global reference to prevent the socket from being garbage collected
 _lock_socket: Optional[socket.socket] = None
-_launch_lock: asyncio.Lock = asyncio.Lock()
-_active_jobs: int = 0
-_jobs_lock: asyncio.Lock = asyncio.Lock()
-_startup_resume_started: bool = False
-_recovery_lock: asyncio.Lock = asyncio.Lock()
 _lzy_process: Optional[subprocess.Popen] = None
 
 def enforce_single_instance() -> None:
@@ -95,8 +95,20 @@ class LzyBot(discord.Client):
         super().__init__(intents=intents)
         self.active_jobs: Dict[str, Dict[str, Any]] = {}
         self.tree = app_commands.CommandTree(self)
+        
+        # State encapsulated to the bot instance
+        self.launch_lock: Optional[asyncio.Lock] = None
+        self.jobs_lock: Optional[asyncio.Lock] = None
+        self.recovery_lock: Optional[asyncio.Lock] = None
+        self.active_job_count: int = 0
+        self.startup_resume_started: bool = False
 
     async def setup_hook(self) -> None:
+        # Initialize locks within the active event loop
+        self.launch_lock = asyncio.Lock()
+        self.jobs_lock = asyncio.Lock()
+        self.recovery_lock = asyncio.Lock()
+
         # Sync the slash commands to Discord when the bot starts
         await self.tree.sync()
         
@@ -139,12 +151,12 @@ class LzyBot(discord.Client):
                 found_key = str(webhook_parent)
             elif webhook_url:
                 def normalize_url(u: str) -> str:
-                    return re.sub(r"^https?://(www\.)?", "", u).rstrip("/")
+                    return NORMALIZE_URL_REGEX.sub("", u).rstrip("/")
                     
                 incoming_norm = normalize_url(webhook_url)
                 yt_id_incoming = None
                 if "youtu" in webhook_url:
-                    m = re.search(r"(?:youtu\.be/|v=|/shorts/|/live/)([0-9A-Za-z_-]{11})(?:\?|&|/|$)", webhook_url)
+                    m = YOUTUBE_ID_REGEX.search(webhook_url)
                     if m:
                         yt_id_incoming = m.group(1)
                         
@@ -152,7 +164,7 @@ class LzyBot(discord.Client):
                     tracked_url = existing_data.get("url", "")
                     
                     if yt_id_incoming and "youtu" in tracked_url:
-                        m2 = re.search(r"(?:youtu\.be/|v=|/shorts/|/live/)([0-9A-Za-z_-]{11})(?:\?|&|/|$)", tracked_url)
+                        m2 = YOUTUBE_ID_REGEX.search(tracked_url)
                         if m2 and m2.group(1) == yt_id_incoming:
                             found_key = existing_key
                             break
@@ -711,13 +723,11 @@ async def resume_backed_up_downloads_on_startup(
     user: Any = None
 ) -> None:
     """Resumes tracking of backed up downloads or retries failed ones."""
-    global _startup_resume_started
-
-    async with _recovery_lock:
-        if not force and _startup_resume_started:
+    async with client.recovery_lock:
+        if not force and client.startup_resume_started:
             return
         if not force:
-            _startup_resume_started = True
+            client.startup_resume_started = True
 
         items = await asyncio.to_thread(load_download_backup_items)
         if not items:
@@ -821,9 +831,7 @@ async def run_download_job(
     job_id: Optional[str] = None
 ) -> None:
     """Enqueues a single download via the local API and polls until it finishes."""
-    global _active_jobs
-
-    async with _launch_lock:
+    async with client.launch_lock:
         try:
             # Ensure the API is running before we queue
             await asyncio.to_thread(check_api_health)
@@ -908,8 +916,8 @@ async def run_download_job(
         "last_webhook_time": time.time()
     }
 
-    async with _jobs_lock:
-        _active_jobs += 1
+    async with client.jobs_lock:
+        client.active_job_count += 1
 
     try:
         while job_key in client.active_jobs:
@@ -946,6 +954,7 @@ async def run_download_job(
                 
             raw_status = str(current_data["status_text"])
             if current_data.get("queue_position") is not None and current_data.get("queue_position") > 0:
+                raw_status = QUEUE_POSITION_REGEX.sub("", raw_status)
                 raw_status += f" (Position: {current_data['queue_position']})"
             if len(raw_status) > 200:
                 raw_status = raw_status[:197] + "..."
@@ -984,8 +993,8 @@ async def run_download_job(
         if job_key in client.active_jobs:
             del client.active_jobs[job_key]
             
-        async with _jobs_lock:
-            _active_jobs = max(0, _active_jobs - 1)
+        async with client.jobs_lock:
+            client.active_job_count = max(0, client.active_job_count - 1)
 
 
 if __name__ == "__main__":

@@ -33,6 +33,7 @@ The project is split into two distinct components: the frontend Python Discord b
 - **Bearer Token Auth:** On startup, the C++ application generates a random API key and writes it to `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`. The Python bot reads this file and includes the token in the `Authorization: Bearer <token>` header for local API requests.
 - **User Authorization:** The bridge requires `AUTHORIZED_USER_ID` and rejects commands or DMs from any other Discord user.
 - **Local Single Instance:** The bridge binds a local UDP socket on `127.0.0.1:48765` to prevent multiple bot processes from issuing competing requests.
+- **Environment Template:** `.env.example` documents the required bridge variables (`DISCORD_BOT_TOKEN`, `AUTHORIZED_USER_ID`, and `LZY_EXECUTABLE_PATH`) for local setup.
 
 ## Download Flow
 1. An authorized user sends `/download`, `/audio`, or a URL in DM.

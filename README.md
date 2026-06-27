@@ -37,7 +37,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 - **Auto-Shutdown & Cleanup:** The C++ app automatically closes when the queue is finished. If the bot crashes or is stopped, any lingering headless C++ processes are terminated to prevent orphaned background work.
 
 ## Prerequisites
-- Python 3.8+
+- Python 3.9+ (Required for `asyncio.to_thread` support)
 - [LzyDownloader](https://github.com/vincentwetzel/lzy-downloader) installed on your machine.
 - A registered Discord Bot application with a valid token.
 
@@ -56,7 +56,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
    ```bash
    pip install discord.py python-dotenv requests
    ```
-3. Create a `.env` file in the root of the project and add your Discord bot token, authorized user ID, and LzyDownloader executable path:
+3. Copy `.env.example` to `.env` in the root of the project, then fill in your Discord bot token, authorized user ID, and LzyDownloader executable path:
    ```env
    DISCORD_BOT_TOKEN=your_discord_bot_token_here
    AUTHORIZED_USER_ID=your_user_id_here
@@ -89,6 +89,7 @@ The bot starts the download locally on your PC and reports progress in Discord. 
 - API token: `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`
 - Server-mode backup queue: `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json`
 - Bridge-created recovery archives: `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json.*.bak`
+- Example environment template: `.env.example`
 
 ## Architecture
 Read [ARCHITECTURE.md](ARCHITECTURE.md) for technical context on the local API schema, auth flow, recovery behavior, and state management. Read [AGENTS.md](AGENTS.md) for the active background actors.
