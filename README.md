@@ -20,7 +20,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 ## Features
 - **Slash Commands:** Supports `/download <url>`, `/audio <url>`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop`.
 - **Direct Message Downloads:** Send the bot a URL in DMs to enqueue a download from anywhere Discord is available.
-- **Offline DM Catch-Up:** On startup, the bot checks recent authorized DM history for URL requests it missed while offline and starts any unacknowledged requests oldest-first.
+- **Offline DM Catch-Up:** On startup, the bot checks recent authorized DM history for URL requests it missed while offline and starts any unacknowledged requests oldest-first, while skipping URLs that are already present in the recovery backup so resumed downloads are not queued twice.
 - **Auto-Launching:** If the LzyDownloader app is closed, the bot automatically launches it silently in headless server mode (`--server --exit-after`).
 - **Startup Recovery:** If server-mode downloads were saved in `downloads_backup.json`, the bot can relaunch LzyDownloader, prune completed backup entries, and resume progress tracking on startup.
 - **Dynamic URL Expansion:** Seamlessly maps internal ID changes from URL expansions (e.g., YouTube Shorts or playlists) back to the original Discord request to keep the UI perfectly synced.

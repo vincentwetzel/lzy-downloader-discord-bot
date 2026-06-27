@@ -46,9 +46,10 @@ The project is split into two distinct components: the frontend Python Discord b
 
 ## Offline DM Catch-Up
 - After Discord reports the bridge as ready, the bot sends the authorized user an online DM and reads the most recent DM messages.
-- Authorized HTTP/HTTPS URL messages are treated as missed requests when no newer bot reply in the scanned history references the same URL.
+- Authorized HTTP/HTTPS URL messages are treated as missed requests when no newer bot reply in the scanned history references the same URL and the URL is not already present in the recovery backup queue.
 - Missed requests are acknowledged in Discord and queued oldest-first using the same standard video download path as live DM URL requests.
 - The scan is intentionally limited to recent DM history so startup remains bounded and previously acknowledged requests are not replayed indefinitely.
+- This duplicate-prevention step keeps startup catch-up from re-queuing downloads that are already scheduled for recovery from `downloads_backup.json`.
 
 ## Recovery Flow
 - The bridge reads `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` for server-mode backup entries.

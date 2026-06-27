@@ -223,11 +223,19 @@ class LzyBot(discord.Client):
                 dm_channel = await user.create_dm()
                 messages = [m async for m in dm_channel.history(limit=20)]
 
+                # Load backup items to prevent duplicate queueing of resumed downloads
+                backup_items = load_download_backup_items()
+                resumed_urls = {item.get("url") for item in backup_items if item.get("url")}
+
                 missed_msgs = []
                 for i, msg in enumerate(messages):
                     if msg.author.id == int(AUTHORIZED_USER_ID):
                         content = msg.content.strip()
                         if is_valid_url(content):
+                            # Skip if this URL is already slated to be resumed/tracked
+                            if content in resumed_urls or any(content in url or url in content for url in resumed_urls):
+                                continue
+
                             # Check if the bot already replied to this specific request
                             # Since history is newest-to-oldest, newer messages are at indices < i
                             bot_replied = any(
