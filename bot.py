@@ -467,7 +467,10 @@ def get_lzy_api_key() -> Optional[str]:
 
 def get_lzy_server_data_dir() -> str:
     """Returns the LzyDownloader data directory used by --server launches."""
-    app_data = os.getenv('LOCALAPPDATA', '')
+    app_data = os.getenv('LOCALAPPDATA')
+    if not app_data:
+        # Fallback to standard Windows path expansion if environment variable is missing
+        app_data = os.path.expandvars(r'%USERPROFILE%\AppData\Local')
     return os.path.join(app_data, 'LzyDownloader', 'Server')
 
 

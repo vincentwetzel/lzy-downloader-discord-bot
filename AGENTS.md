@@ -12,12 +12,12 @@ The primary Python process (`bot.py`) that maintains a connection to the Discord
   - Scans recent authorized direct messages on startup and queues unacknowledged offline URL requests oldest-first, while skipping URLs already present in the recovery backup queue to avoid duplicate re-queueing.
   - Sends online and offline notification DMs to the authorized user when connecting or gracefully shutting down.
   - Checks the health of the local C++ API, launches the Download Worker if it is not running, and ensures it is properly terminated when the bridge shuts down.
-  - Reads the local bearer token from `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`.
+  - Reads the local bearer token from `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`, falling back to `%USERPROFILE%\AppData\Local\LzyDownloader\Server\api_token.txt` if `LOCALAPPDATA` is unavailable.
   - Hosts an asynchronous webhook listener (`aiohttp`) to receive push updates from the C++ app.
   - Formats webhook JSON payloads into ASCII progress bars, displays real-time queue positions, and updates Discord messages with a debounce mechanism.
   - Tracks active download jobs and updates the original message with a final status when individual downloads complete.
   - Sanitizes dynamic webhook text (like titles and status updates) to prevent accidental Discord markdown rendering.
-  - Reads `downloads_backup.json` to resume startup work, prune completed backup entries, and retry or clear inactive recovery jobs.
+  - Reads `downloads_backup.json` from `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` or the `%USERPROFILE%\AppData\Local` fallback path to resume startup work, prune completed backup entries, and retry or clear inactive recovery jobs.
   - Archives previous backup files before recovery cleanup so recovery state is not discarded silently.
   - Uses a local single-instance lock so only one bridge process runs at a time.
 
@@ -32,7 +32,7 @@ The headless instance of the LzyDownloader Qt6 application.
   - Exposes these metrics over the local HTTP server (`127.0.0.1:8765`).
   - Pushes live state changes to the Interaction Agent via an HTTP `POST` webhook (`127.0.0.1:8766/webhook`).
   - Includes `parent_id` and `url` alongside the `job_id` in its webhook payloads, allowing the bridge to map expanded child jobs back to the original Discord requests.
-  - Persists server-mode queue recovery data in `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json`.
+  - Persists server-mode queue recovery data in `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json`, using `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json` as the fallback location if needed.
 
 ## 3. Development Requirements
 

@@ -30,7 +30,7 @@ The project is split into two distinct components: the frontend Python Discord b
 
 ## Security & Authentication
 - **Local Bind Only:** The C++ API server only listens on localhost (`127.0.0.1`), preventing external network access.
-- **Bearer Token Auth:** On startup, the C++ application generates a random API key and writes it to `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`. The Python bot reads this file and includes the token in the `Authorization: Bearer <token>` header for local API requests.
+- **Bearer Token Auth:** On startup, the C++ application generates a random API key and writes it to `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`. The Python bot reads this file and includes the token in the `Authorization: Bearer <token>` header for local API requests. If `LOCALAPPDATA` is missing, the bridge falls back to `%USERPROFILE%\AppData\Local` for the same server files.
 - **User Authorization:** The bridge requires `AUTHORIZED_USER_ID` and rejects commands or DMs from any other Discord user.
 - **Local Single Instance:** The bridge binds a local UDP socket on `127.0.0.1:48765` to prevent multiple bot processes from issuing competing requests.
 - **Environment Template:** `.env.example` documents the required bridge variables (`DISCORD_BOT_TOKEN`, `AUTHORIZED_USER_ID`, and `LZY_EXECUTABLE_PATH`) for local setup.
@@ -62,6 +62,6 @@ The project is split into two distinct components: the frontend Python Discord b
 
 ## Runtime Files
 - `.env` in the bridge directory stores `DISCORD_BOT_TOKEN`, `AUTHORIZED_USER_ID`, and `LZY_EXECUTABLE_PATH`.
-- `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt` stores the current local API bearer token.
-- `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` stores LzyDownloader server-mode recovery state.
-- `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json.*.bak` stores bridge-created backup archives.
+- `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt` stores the current local API bearer token, with `%USERPROFILE%\AppData\Local\LzyDownloader\Server\api_token.txt` as the fallback path when `LOCALAPPDATA` is unavailable.
+- `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` stores LzyDownloader server-mode recovery state, with `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json` as the fallback path when `LOCALAPPDATA` is unavailable.
+- `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json.*.bak` stores bridge-created backup archives, with `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json.*.bak` as the fallback path when `LOCALAPPDATA` is unavailable.

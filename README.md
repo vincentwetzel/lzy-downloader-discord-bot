@@ -86,9 +86,9 @@ Once the bot is online, open Discord and run:
 The bot starts the download locally on your PC and reports progress in Discord. Use `/retry_failed` to requeue failed, stopped, or errored recovery jobs, and `/clear_failed` to remove inactive backup entries after archiving the previous backup.
 
 ## Runtime Files
-- API token: `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`
-- Server-mode backup queue: `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json`
-- Bridge-created recovery archives: `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json.*.bak`
+- API token: `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt` or, if `LOCALAPPDATA` is unavailable, `%USERPROFILE%\AppData\Local\LzyDownloader\Server\api_token.txt`
+- Server-mode backup queue: `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` or, if `LOCALAPPDATA` is unavailable, `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json`
+- Bridge-created recovery archives: `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json.*.bak` or, if `LOCALAPPDATA` is unavailable, `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json.*.bak`
 - Example environment template: `.env.example`
 
 ## Architecture
