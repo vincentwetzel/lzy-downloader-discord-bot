@@ -16,6 +16,8 @@ The project is split into two distinct components: the frontend Python Discord b
 
 ### 2. Discord Bridge Bot (Python Frontend)
 - **Framework:** `discord.py`
+- **Entrypoint:** `lzy_downloader_discord_bridge.py`
+- **Windows launchers:** `start_lzy_downloader_discord_bridge.bat` and `stop_lzy_downloader_discord_bridge.bat`
 - **Responsibilities:**
   - Handles `/download`, `/audio`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop` slash commands.
   - Accepts authorized direct-message URLs as standard video downloads.

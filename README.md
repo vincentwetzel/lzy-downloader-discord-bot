@@ -1,5 +1,7 @@
 # LzyDownloader Discord Bridge
 
+Current release: `v1.2.9`
+
 A lightweight Python Discord bot that acts as a remote control for **[LzyDownloader](https://github.com/vincentwetzel/lzy-downloader)**, a local C++ Qt6 desktop application.
 
 ## Overview
@@ -68,13 +70,13 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 ## Usage
 Run the bot via the command line:
 ```bash
-python bot.py
+python lzy_downloader_discord_bridge.py
 ```
 
 On Windows, you can also use the helper scripts:
 ```bat
-start_bot.bat
-stop_bot.bat
+start_lzy_downloader_discord_bridge.bat
+stop_lzy_downloader_discord_bridge.bat
 ```
 
 Once the bot is online, open Discord and run:

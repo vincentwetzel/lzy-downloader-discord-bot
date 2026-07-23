@@ -3,9 +3,9 @@
 This document outlines the primary actors running in the LzyDownloader Discord Bridge environment.
 
 ## 1. The Interaction Agent (Discord Bot)
-The primary Python process (`bot.py`) that maintains a connection to the Discord Gateway.
+The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a connection to the Discord Gateway.
 
-- **Lifecycle:** Runs continuously until `/stop`, `stop_bot.bat`, or process shutdown closes it.
+- **Lifecycle:** Runs continuously until `/stop`, `stop_lzy_downloader_discord_bridge.bat`, or process shutdown closes it.
 - **Tasks:**
   - Listens for `/download`, `/audio`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop` commands from the authorized Discord user.
   - Accepts authorized direct-message URLs as standard video download requests.

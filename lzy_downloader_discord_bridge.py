@@ -15,6 +15,8 @@ from dotenv import load_dotenv
 from urllib.parse import urlparse
 from typing import Optional, Callable, Awaitable, Any, Dict, List, Set, Tuple
 
+APP_VERSION: str = "1.2.9"
+
 # Load the Discord token from the .env file located in the script's directory
 script_dir = os.path.dirname(os.path.abspath(__file__))
 env_path = os.path.join(script_dir, '.env')
@@ -455,14 +457,37 @@ async def retry_failed(interaction: discord.Interaction) -> None:
     )
 
 def get_lzy_api_key() -> Optional[str]:
-    """Reads the auto-generated API key from LzyDownloader's AppData folder."""
-    key_path = os.path.join(get_lzy_server_data_dir(), 'api_token.txt')
+    """Reads the auto-generated API key from LzyDownloader's AppData folder.
+    Checks both Server and GUI token files and returns the one that successfully authorizes."""
+    server_dir = get_lzy_server_data_dir()
+    gui_dir = os.path.dirname(server_dir)
     
-    if not os.path.exists(key_path):
+    keys_to_try = []
+    for d in [server_dir, gui_dir]:
+        key_path = os.path.join(d, 'api_token.txt')
+        if os.path.exists(key_path):
+            try:
+                with open(key_path, 'r', encoding='utf-8') as f:
+                    val = f.read().strip()
+                    if val:
+                        keys_to_try.append(val)
+            except OSError:
+                pass
+                
+    if not keys_to_try:
         return None
         
-    with open(key_path, 'r', encoding='utf-8') as f:
-        return f.read().strip()
+    proxies = {"http": "", "https": ""}
+    for key in keys_to_try:
+        try:
+            headers = {"Authorization": f"Bearer {key}"}
+            res = requests.get(f"{BASE_URL}/status", headers=headers, timeout=1, proxies=proxies)
+            if res.status_code == 200:
+                return key
+        except requests.exceptions.RequestException:
+            pass
+            
+    return keys_to_try[0]
 
 
 def get_lzy_server_data_dir() -> str:
