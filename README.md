@@ -36,6 +36,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 - **Message Sanitization:** Safely escapes markdown and spoiler tags from dynamic content (like video titles and status text) to ensure clean formatting in the Discord UI.
 - **Secure Communication:** Uses auto-generated local API tokens so only the bot can communicate with the local application.
 - **Single-Instance Guard:** Prevents accidentally running multiple bridge processes at the same time.
+- **Sleep/Wake Recovery:** The Windows start script supervises the bridge and automatically restarts it if a sleep/wake-related gateway or process failure causes it to exit. The stop script disables this restart loop before shutting it down.
 - **Auto-Shutdown & Cleanup:** The C++ app automatically closes when the queue is finished. If the bot crashes or is stopped, any lingering headless C++ processes are terminated to prevent orphaned background work.
 
 ## Prerequisites

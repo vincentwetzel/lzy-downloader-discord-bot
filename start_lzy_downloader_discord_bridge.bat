@@ -8,4 +8,14 @@ powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"name lik
 powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"name = 'LzyDownloader.exe' and CommandLine like '%%--server%%'\" | Invoke-CimMethod -MethodName Terminate" >nul 2>&1
 
 echo Starting new instance...
-start "" pythonw lzy_downloader_discord_bridge.py
+set "STOP_MARKER=%~dp0lzy_downloader_discord_bridge.stop"
+if exist "%STOP_MARKER%" del /q "%STOP_MARKER%" >nul 2>&1
+
+:: Keep the supervisor alive so a sleep/wake-related process or gateway failure is recovered.
+:supervise
+if exist "%STOP_MARKER%" exit /b 0
+pythonw "%~dp0lzy_downloader_discord_bridge.py"
+if exist "%STOP_MARKER%" exit /b 0
+echo Bridge exited unexpectedly. Restarting in 10 seconds...
+timeout /t 10 /nobreak >nul
+goto supervise

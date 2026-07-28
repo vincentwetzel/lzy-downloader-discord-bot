@@ -214,8 +214,9 @@ class LzyBot(discord.Client):
         return web.Response(text="OK")
 
     async def on_ready(self) -> None:
+        print(f"Discord connection ready as {self.user}.")
         self.loop.create_task(resume_backed_up_downloads_on_startup())
-        
+
         if AUTHORIZED_USER_ID:
             try:
                 user = await self.fetch_user(int(AUTHORIZED_USER_ID))
@@ -268,6 +269,14 @@ class LzyBot(discord.Client):
 
             except Exception as e:
                 print(f"Failed to process startup DM or missed messages: {e}")
+
+    async def on_resumed(self) -> None:
+        """Logs successful gateway recovery after a network interruption or wake."""
+        print("Discord gateway session resumed after interruption.")
+
+    async def on_disconnect(self) -> None:
+        """Logs gateway loss; discord.py will attempt its built-in reconnect."""
+        print("Discord gateway disconnected; waiting for automatic reconnect.")
 
     async def close(self) -> None:
         if AUTHORIZED_USER_ID:
