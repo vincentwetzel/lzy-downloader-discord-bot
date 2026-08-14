@@ -7,6 +7,8 @@ import sys
 import time
 import subprocess
 import atexit
+import logging
+from logging.handlers import RotatingFileHandler
 import requests
 import discord
 from discord import app_commands
@@ -20,6 +22,92 @@ APP_VERSION: str = "1.2.9"
 # Load the Discord token from the .env file located in the script's directory
 script_dir = os.path.dirname(os.path.abspath(__file__))
 env_path = os.path.join(script_dir, '.env')
+
+# The normal launcher uses pythonw, so console output is unavailable in the
+# background. Keep bridge, library, and uncaught-exception diagnostics in a
+# bounded file beside this script.
+LOG_PATH = os.path.join(script_dir, 'bot.log')
+
+class TimestampedRotatingFileHandler(RotatingFileHandler):
+    """Rotate by size and give archived files an unambiguous timestamp."""
+    def doRollover(self) -> None:
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+
+        timestamp = time.strftime('%Y-%m-%d_%H-%M-%S')
+        archive_path = os.path.join(script_dir, f'bot_{timestamp}.log')
+        suffix = 1
+        while os.path.exists(archive_path):
+            archive_path = os.path.join(script_dir, f'bot_{timestamp}_{suffix}.log')
+            suffix += 1
+        if os.path.exists(self.baseFilename):
+            os.replace(self.baseFilename, archive_path)
+
+        self.stream = self._open()
+        archived_logs = sorted(
+            (os.path.join(script_dir, name) for name in os.listdir(script_dir)
+             if name.startswith('bot_') and name.endswith('.log')),
+            key=os.path.getmtime,
+            reverse=True,
+        )
+        for old_log in archived_logs[self.backupCount:]:
+            try:
+                os.remove(old_log)
+            except OSError:
+                pass
+
+logger = logging.getLogger('lzy_downloader_discord_bridge')
+logger.setLevel(logging.INFO)
+file_handler = TimestampedRotatingFileHandler(LOG_PATH, maxBytes=10 * 1024 * 1024,
+                                               backupCount=5, encoding='utf-8')
+file_handler.setFormatter(logging.Formatter(
+    '%(asctime)s %(levelname)s [%(name)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'))
+logger.addHandler(file_handler)
+
+if sys.__stderr__ is not None:
+    console_handler = logging.StreamHandler(sys.__stderr__)
+    console_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+    logger.addHandler(console_handler)
+
+for library_name in ('discord', 'aiohttp', 'asyncio'):
+    library_logger = logging.getLogger(library_name)
+    library_logger.setLevel(logging.INFO)
+    library_logger.addHandler(file_handler)
+
+def log_uncaught_exception(exc_type: type[BaseException], exc_value: BaseException,
+                           exc_traceback: Any) -> None:
+    """Write an uncaught exception before the background process exits."""
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    logger.critical('Uncaught exception', exc_info=(exc_type, exc_value, exc_traceback))
+
+sys.excepthook = log_uncaught_exception
+logger.info('Bridge logging initialized. Log file: %s', LOG_PATH)
+
+class _LoggingOutput:
+    """Route legacy print output through the rotating logger."""
+    def __init__(self, level: int) -> None:
+        self.level = level
+        self.buffer = ''
+
+    def write(self, text: str) -> int:
+        self.buffer += text
+        while '\n' in self.buffer:
+            line, self.buffer = self.buffer.split('\n', 1)
+            if line:
+                logger.log(self.level, line)
+        return len(text)
+
+    def flush(self) -> None:
+        if self.buffer:
+            logger.log(self.level, self.buffer)
+            self.buffer = ''
+
+sys.stdout = _LoggingOutput(logging.INFO)
+sys.stderr = _LoggingOutput(logging.ERROR)
 load_dotenv(dotenv_path=env_path)
 TOKEN: Optional[str] = os.getenv('DISCORD_BOT_TOKEN')
 AUTHORIZED_USER_ID: Optional[str] = os.getenv('AUTHORIZED_USER_ID')
@@ -215,7 +303,8 @@ class LzyBot(discord.Client):
 
     async def on_ready(self) -> None:
         print(f"Discord connection ready as {self.user}.")
-        self.loop.create_task(resume_backed_up_downloads_on_startup())
+        # Arm recovery tracking before missed-DM tasks can launch the worker.
+        await resume_backed_up_downloads_on_startup()
 
         if AUTHORIZED_USER_ID:
             try:
@@ -763,6 +852,43 @@ def check_api_health() -> None:
     )
 
 
+def build_active_job_data(url: str) -> Dict[str, Any]:
+    """Creates the initial event-driven state for a tracked download."""
+    return {
+        "url": url,
+        "status_text": "Processing",
+        "queue_position": None,
+        "progress": 0.0,
+        "speed": "",
+        "eta": "",
+        "title": "",
+        "is_final": False,
+        "final_status": "",
+        "last_content": "",
+        "last_webhook_time": time.time(),
+    }
+
+
+async def register_active_job(job_key: str, url: str) -> bool:
+    """Registers a job before launch so restored webhook events cannot be lost."""
+    if job_key in client.active_jobs:
+        return False
+
+    client.active_jobs[job_key] = build_active_job_data(url)
+    async with client.jobs_lock:
+        client.active_job_count += 1
+    return True
+
+
+async def unregister_active_job(job_key: str) -> None:
+    """Removes a tracked job and keeps the active-job count consistent."""
+    if job_key in client.active_jobs:
+        del client.active_jobs[job_key]
+
+    async with client.jobs_lock:
+        client.active_job_count = max(0, client.active_job_count - 1)
+
+
 async def resume_backed_up_downloads_on_startup(
     force: bool = False,
     user: Any = None
@@ -839,6 +965,7 @@ async def resume_backed_up_downloads_on_startup(
                 await c.send(new_content)
             return edit_cb, send_cb
 
+        pending_tasks = []
         for item in target_items:
             url = str(item.get("url", ""))
             if not url or not is_valid_url(url):
@@ -853,18 +980,53 @@ async def resume_backed_up_downloads_on_startup(
                 )
                 edit_msg_cb, send_msg_cb = make_cbs(sent_msg, dm_channel)
 
-                client.loop.create_task(
-                    run_download_job(
+                job_registered = False
+                if skip_enqueue:
+                    if not job_id:
+                        await edit_msg_cb("? Missing job_id for resumed download.")
+                        continue
+                    job_registered = await register_active_job(job_id, url)
+                    if not job_registered:
+                        print(f"Recovery job {job_id} is already tracked; skipping duplicate.")
+                        continue
+
+                pending_tasks.append(
+                    (
                         url,
                         edit_msg_cb,
                         send_msg_cb,
-                        download_type=download_type,
-                        skip_enqueue=skip_enqueue,
-                        job_id=job_id
+                        download_type,
+                        skip_enqueue,
+                        job_id,
+                        job_registered,
                     )
                 )
             except Exception as e:
                 print(f"Failed to start recovery task for {url}: {e}")
+
+        # Register all restored jobs before launching the first task. The first
+        # task may start LzyDownloader, which immediately emits events for the
+        # entire restored queue.
+        for (
+            task_url,
+            task_edit_msg,
+            task_send_msg,
+            task_download_type,
+            task_skip_enqueue,
+            task_job_id,
+            task_job_registered,
+        ) in pending_tasks:
+            client.loop.create_task(
+                run_download_job(
+                    task_url,
+                    task_edit_msg,
+                    task_send_msg,
+                    download_type=task_download_type,
+                    skip_enqueue=task_skip_enqueue,
+                    job_id=task_job_id,
+                    job_registered=task_job_registered,
+                )
+            )
 
 
 async def run_download_job(
@@ -873,19 +1035,29 @@ async def run_download_job(
     send_msg: Callable[[str], Awaitable[None]],
     download_type: str = "video",
     skip_enqueue: bool = False,
-    job_id: Optional[str] = None
+    job_id: Optional[str] = None,
+    job_registered: bool = False
 ) -> None:
     """Enqueues a single download via the local API and polls until it finishes."""
+    job_key = str(job_id) if job_registered and job_id else None
+    if job_registered and not job_key:
+        await edit_msg("? Missing job_id for resumed download.")
+        return
     async with client.launch_lock:
         try:
             # Ensure the API is running before we queue
             await asyncio.to_thread(check_api_health)
+
         except Exception as e:
+            if job_key:
+                await unregister_active_job(job_key)
             await edit_msg(f"❌ {e}")
             return
 
     api_key = await asyncio.to_thread(get_lzy_api_key)
     if not api_key:
+        if job_key:
+            await unregister_active_job(job_key)
         await edit_msg("❌ Failed to read `api_token.txt`. The app may not have generated it.")
         return
 
@@ -947,22 +1119,8 @@ async def run_download_job(
             return
         job_key = str(job_id)
         
-    client.active_jobs[job_key] = {
-        "url": url,
-        "status_text": "Processing",
-        "queue_position": None,
-        "progress": 0.0,
-        "speed": "",
-        "eta": "",
-        "title": "",
-        "is_final": False,
-        "final_status": "",
-        "last_content": "",
-        "last_webhook_time": time.time()
-    }
-
-    async with client.jobs_lock:
-        client.active_job_count += 1
+    if not job_registered:
+        await register_active_job(job_key, url)
 
     try:
         while job_key in client.active_jobs:
@@ -1035,11 +1193,7 @@ async def run_download_job(
                     
             await asyncio.sleep(1.5)
     finally:
-        if job_key in client.active_jobs:
-            del client.active_jobs[job_key]
-            
-        async with client.jobs_lock:
-            client.active_job_count = max(0, client.active_job_count - 1)
+        await unregister_active_job(job_key)
 
 
 if __name__ == "__main__":

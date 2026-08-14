@@ -24,7 +24,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 - **Direct Message Downloads:** Send the bot a URL in DMs to enqueue a download from anywhere Discord is available.
 - **Offline DM Catch-Up:** On startup, the bot checks recent authorized DM history for URL requests it missed while offline and starts any unacknowledged requests oldest-first, while skipping URLs that are already present in the recovery backup so resumed downloads are not queued twice.
 - **Auto-Launching:** If the LzyDownloader app is closed, the bot automatically launches it silently in headless server mode (`--server --exit-after`).
-- **Startup Recovery:** If server-mode downloads were saved in `downloads_backup.json`, the bot can relaunch LzyDownloader, prune completed backup entries, and resume progress tracking on startup.
+- **Startup Recovery:** If server-mode downloads were saved in `downloads_backup.json`, the bot registers them before relaunching LzyDownloader, prunes completed entries, and resumes progress tracking without losing startup webhook events.
 - **Dynamic URL Expansion:** Seamlessly maps internal ID changes from URL expansions (e.g., YouTube Shorts or playlists) back to the original Discord request to keep the UI perfectly synced.
 - **Failed Job Recovery:** Failed, stopped, or errored backup entries can be retried without restarting the bot.
 - **Inactive Job Cleanup:** Failed, stopped, errored, and completed backup entries can be cleared after archiving the previous backup file.
@@ -37,7 +37,9 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 - **Secure Communication:** Uses auto-generated local API tokens so only the bot can communicate with the local application.
 - **Single-Instance Guard:** Prevents accidentally running multiple bridge processes at the same time.
 - **Sleep/Wake Recovery:** The Windows start script supervises the bridge and automatically restarts it if a sleep/wake-related gateway or process failure causes it to exit. The stop script disables this restart loop before shutting it down.
+- **Non-Blocking Launcher:** The Windows start script returns immediately after starting its detached supervisor, while the supervisor continues managing the bridge in the background.
 - **Auto-Shutdown & Cleanup:** The C++ app automatically closes when the queue is finished. If the bot crashes or is stopped, any lingering headless C++ processes are terminated to prevent orphaned background work.
+- **Persistent Diagnostics:** Bridge output, `discord.py`/`aiohttp` diagnostics, and uncaught Python tracebacks are written to `bot.log` beside the bridge script. The active file rotates at 10 MB; archived files are timestamped and five are retained.
 
 ## Prerequisites
 - Python 3.9+ (Required for `asyncio.to_thread` support)
@@ -93,6 +95,7 @@ The bot starts the download locally on your PC and reports progress in Discord. 
 - Server-mode backup queue: `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` or, if `LOCALAPPDATA` is unavailable, `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json`
 - Bridge-created recovery archives: `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json.*.bak` or, if `LOCALAPPDATA` is unavailable, `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json.*.bak`
 - Example environment template: `.env.example`
+- Bridge log: `bot.log` beside `lzy_downloader_discord_bridge.py`; rotated archives use names such as `bot_2026-08-12_231530.log` and five are retained
 
 ## Architecture
 Read [ARCHITECTURE.md](ARCHITECTURE.md) for technical context on the local API schema, auth flow, recovery behavior, and state management. Read [AGENTS.md](AGENTS.md) for the active background actors.

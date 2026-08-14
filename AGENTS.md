@@ -5,7 +5,7 @@ This document outlines the primary actors running in the LzyDownloader Discord B
 ## 1. The Interaction Agent (Discord Bot)
 The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a connection to the Discord Gateway.
 
-- **Lifecycle:** Runs continuously until `/stop`, `stop_lzy_downloader_discord_bridge.bat`, or process shutdown closes it.
+- **Lifecycle:** Runs continuously until `/stop`, `stop_lzy_downloader_discord_bridge.bat`, or process shutdown closes it. The start batch file returns immediately after handing supervision to a detached child command process.
 - **Tasks:**
   - Listens for `/download`, `/audio`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop` commands from the authorized Discord user.
   - Accepts authorized direct-message URLs as standard video download requests.
@@ -16,6 +16,7 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
   - Hosts an asynchronous webhook listener (`aiohttp`) to receive push updates from the C++ app.
   - Formats webhook JSON payloads into ASCII progress bars, displays real-time queue positions, and updates Discord messages with a debounce mechanism.
   - Tracks active download jobs and updates the original message with a final status when individual downloads complete.
+  - Pre-registers all queued recovery jobs before launching the C++ worker so startup webhook events cannot arrive before bridge tracking exists.
   - Sanitizes dynamic webhook text (like titles and status updates) to prevent accidental Discord markdown rendering.
   - Reads `downloads_backup.json` from `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` or the `%USERPROFILE%\AppData\Local` fallback path to resume startup work, prune completed backup entries, and retry or clear inactive recovery jobs.
   - Archives previous backup files before recovery cleanup so recovery state is not discarded silently.

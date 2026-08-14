@@ -12,4 +12,3 @@ powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"name lik
 powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"name = 'LzyDownloader.exe' and CommandLine like '%%--server%%'\" | Invoke-CimMethod -MethodName Terminate" >nul 2>&1
 
 echo Bot stopped successfully!
-pause

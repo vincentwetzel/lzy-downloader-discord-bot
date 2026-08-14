@@ -18,7 +18,7 @@ The project is split into two distinct components: the frontend Python Discord b
 - **Framework:** `discord.py`
 - **Entrypoint:** `lzy_downloader_discord_bridge.py`
 - **Windows launchers:** `start_lzy_downloader_discord_bridge.bat` and `stop_lzy_downloader_discord_bridge.bat`
-- **Windows supervision:** The start launcher restarts the bridge after an unexpected exit, including failures caused by a system sleep/wake transition; the stop launcher writes a marker to prevent an intentional shutdown from being restarted.
+- **Windows supervision:** The start launcher hands the supervisor loop to a minimized detached command child, then returns immediately. That supervisor restarts the bridge after an unexpected exit, including failures caused by a system sleep/wake transition; the stop launcher writes a marker to prevent an intentional shutdown from being restarted.
 - **Responsibilities:**
   - Handles `/download`, `/audio`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop` slash commands.
   - Accepts authorized direct-message URLs as standard video downloads.
@@ -30,6 +30,7 @@ The project is split into two distinct components: the frontend Python Discord b
   - Tracks active download jobs so the user receives completion and queue-empty notifications.
   - Prevents duplicate bot processes by binding a local single-instance lock socket.
   - Sanitizes dynamic data (video titles, API errors, status texts) from the C++ API to prevent unintended Discord markdown or spoiler formatting.
+  - Writes bridge output, Discord/aiohttp library diagnostics, and uncaught exception tracebacks to `bot.log` beside the entrypoint. The active file rotates at 10 MB into timestamped archives, retaining five; sensitive webhook payload bodies are not logged.
 
 ## Security & Authentication
 - **Local Bind Only:** The C++ API server only listens on localhost (`127.0.0.1`), preventing external network access.
@@ -57,6 +58,7 @@ The project is split into two distinct components: the frontend Python Discord b
 ## Recovery Flow
 - The bridge reads `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` for server-mode backup entries.
 - Queued resumable entries can be resumed after startup by relaunching LzyDownloader and reattaching Discord progress tracking.
+- Recovery tracking entries are registered before the first LzyDownloader launch because server startup immediately emits events for every restored queue item. `on_ready()` completes this setup before missed-DM catch-up can start another task.
 - Failed, stopped, or errored entries are treated as stranded jobs and are not assumed to auto-run safely.
 - Completed entries are pruned from the backup file during startup recovery so they do not linger as resumable work.
 - `/retry_failed` archives the previous backup, preserves still-queued resumable entries, and re-enqueues failed, stopped, or errored URLs for fresh tracking.
@@ -68,3 +70,4 @@ The project is split into two distinct components: the frontend Python Discord b
 - `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt` stores the current local API bearer token, with `%USERPROFILE%\AppData\Local\LzyDownloader\Server\api_token.txt` as the fallback path when `LOCALAPPDATA` is unavailable.
 - `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` stores LzyDownloader server-mode recovery state, with `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json` as the fallback path when `LOCALAPPDATA` is unavailable.
 - `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json.*.bak` stores bridge-created backup archives, with `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json.*.bak` as the fallback path when `LOCALAPPDATA` is unavailable.
+- `bot.log` beside `lzy_downloader_discord_bridge.py` stores active diagnostics; rotated files use timestamped names such as `bot_2026-08-12_231530.log`.

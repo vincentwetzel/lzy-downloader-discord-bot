@@ -1,4 +1,11 @@
 @echo off
+
+:: Run the supervisor in a detached child so this launcher returns immediately.
+if /i not "%~1"=="__supervise" (
+    powershell -NoProfile -Command "Start-Process -FilePath '%ComSpec%' -ArgumentList @('/d','/c','call','%~f0','__supervise') -WindowStyle Hidden"
+    exit /b 0
+)
+
 echo Stopping existing LzyDownloader Discord Bridge instances...
 
 :: Safely target only Python processes executing this bridge
