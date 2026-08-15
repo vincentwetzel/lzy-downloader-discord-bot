@@ -1072,8 +1072,12 @@ async def run_download_job(
             "url": url, 
             "type": download_type,
             "download_type": download_type,
+            # Server-mode requests have no GUI dialog in which to confirm a
+            # duplicate.  Tell the C++ API explicitly that this is intentional.
+            "override_archive": True,
             "options": {
-                "type": download_type
+                "type": download_type,
+                "override_archive": True
             }
         }
         

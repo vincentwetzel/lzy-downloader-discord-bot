@@ -33,6 +33,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 - **Shared Preferences:** Downloads use the same LzyDownloader preferences configured in the GUI; the bridge does not maintain a separate settings file.
 - **Live Progress Bars:** Updates Discord messages with an ASCII progress bar, ETA, download speed, dynamic queue position, and status.
 - **Completion Status:** Updates the original Discord progress message with a final completion or failure status when the download finishes.
+- **Intentional Re-downloads:** Bot enqueue requests explicitly confirm archive override, so a URL already completed in the shared archive does not wait for the GUI duplicate-download dialog.
 - **Message Sanitization:** Safely escapes markdown and spoiler tags from dynamic content (like video titles and status text) to ensure clean formatting in the Discord UI.
 - **Secure Communication:** Uses auto-generated local API tokens so only the bot can communicate with the local application.
 - **Single-Instance Guard:** Prevents accidentally running multiple bridge processes at the same time.

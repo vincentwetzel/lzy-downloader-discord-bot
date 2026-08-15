@@ -13,6 +13,7 @@ __pycache__/
 *$py.class
 bot.log
 bot.log.*
+bot_*
 
 # OS / IDE generated files
 .vscode/
