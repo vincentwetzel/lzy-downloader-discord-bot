@@ -10,6 +10,8 @@ Instead of baking heavy Discord SDKs directly into the C++ desktop app, LzyDownl
 ## Available Commands
 *Project Requirement: This list must be kept updated as new commands are added to the bot.*
 - `/audio <url>` - Start a new audio-only download.
+- `/downloads` - List active downloads and their job IDs.
+- `/cancel <job_id>` - Request cancellation of an active download.
 - `/clear_failed` - Clear inactive recovery jobs (failed, stopped, errored, or completed) from `downloads_backup.json`.
 - `/download <url>` - Start a new standard video download.
 - `/help` - List all available commands.
@@ -17,22 +19,32 @@ Instead of baking heavy Discord SDKs directly into the C++ desktop app, LzyDownl
 - `/retry_failed` - Retry failed, stopped, or errored recovery jobs from `downloads_backup.json`.
 - `/stop` - Gracefully shut down the Discord bot.
 
-Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard video download without using a slash command. In DMs, send `ping` to verify that the bot is online.
+`/downloads` and `/cancel` responses are private to the authorized user. The
+`job_id` argument supports Discord autocomplete, which lists currently tracked
+jobs by title and ID. Cancellation is asynchronous: the command confirms that
+the request was accepted, and the original progress message is updated when
+the C++ backend emits the terminal `Cancelled`/`Canceled` webhook state.
+
+Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard video download without using a slash command. In DMs, send `ping` to verify that the bot is online or `cancel <job_id>` to request cancellation.
 
 ## Features
-- **Slash Commands:** Supports `/download <url>`, `/audio <url>`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop`.
+- **Slash Commands:** Supports `/download <url>`, `/audio <url>`, `/downloads`, `/cancel <job_id>`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop`.
 - **Direct Message Downloads:** Send the bot a URL in DMs to enqueue a download from anywhere Discord is available.
 - **Offline DM Catch-Up:** On startup, the bot checks recent authorized DM history for URL requests it missed while offline and starts any unacknowledged requests oldest-first, while skipping URLs that are already present in the recovery backup so resumed downloads are not queued twice.
 - **Auto-Launching:** If the LzyDownloader app is closed, the bot automatically launches it silently in headless server mode (`--server --exit-after`).
 - **Startup Recovery:** If server-mode downloads were saved in `downloads_backup.json`, the bot registers them before relaunching LzyDownloader, prunes completed entries, and resumes progress tracking without losing startup webhook events.
 - **Dynamic URL Expansion:** Seamlessly maps internal ID changes from URL expansions (e.g., YouTube Shorts or playlists) back to the original Discord request to keep the UI perfectly synced.
 - **Failed Job Recovery:** Failed, stopped, or errored backup entries can be retried without restarting the bot.
+- **Recovery Deduplication:** `/retry_failed` collapses equivalent failed/stopped entries by generic URL identity and download type before submitting API requests; URL normalization has no extractor-specific branches.
 - **Inactive Job Cleanup:** Failed, stopped, errored, and completed backup entries can be cleared after archiving the previous backup file.
 - **Backup Archiving:** Recovery and clear operations preserve old `downloads_backup.json` files as `.bak` archives and prune older bridge-created archives.
 - **Lifecycle Notifications:** Sends a DM to the authorized user when the bot connects to Discord and when it gracefully shuts down.
 - **Shared Preferences:** Downloads use the same LzyDownloader preferences configured in the GUI; the bridge does not maintain a separate settings file.
 - **Live Progress Bars:** Updates Discord messages with an ASCII progress bar, ETA, download speed, dynamic queue position, and status.
+- **Unsupported-link cleanup:** Generic non-interactive validation failures from LzyDownloader are delivered as terminal webhook errors, shown with the diagnostic in Discord, and removed from active bridge tracking immediately.
+- **Early Job Tracking:** Each enqueue request receives a bridge-generated job ID before the API call, so validation failures that arrive by webhook can still be matched to the original Discord message.
 - **Completion Status:** Updates the original Discord progress message with a final completion or failure status when the download finishes.
+- **Remote Cancellation:** `/downloads` exposes active job IDs and `/cancel` sends an authenticated `POST /cancel` request to LzyDownloader; the final cancellation is delivered through the normal webhook event.
 - **Intentional Re-downloads:** Bot enqueue requests explicitly confirm archive override, so a URL already completed in the shared archive does not wait for the GUI duplicate-download dialog.
 - **Message Sanitization:** Safely escapes markdown and spoiler tags from dynamic content (like video titles and status text) to ensure clean formatting in the Discord UI.
 - **Secure Communication:** Uses auto-generated local API tokens so only the bot can communicate with the local application.
@@ -87,9 +99,16 @@ Once the bot is online, open Discord and run:
 ```text
 /download url:https://www.youtube.com/watch?v=...
 /audio url:https://www.youtube.com/watch?v=...
+/downloads
+/cancel job_id:<job-id-from-downloads>
 ```
 
-The bot starts the download locally on your PC and reports progress in Discord. Use `/retry_failed` to requeue failed, stopped, or errored recovery jobs, and `/clear_failed` to remove inactive backup entries after archiving the previous backup.
+The bot starts the download locally on your PC and reports progress in Discord. Use `/downloads` to view tracked job IDs, `/cancel` to request cancellation, `/retry_failed` to requeue failed, stopped, or errored recovery jobs, and `/clear_failed` to remove inactive backup entries after archiving the previous backup.
+
+For direct messages, send `cancel <job-id>` to request cancellation. The bridge
+only forwards cancellation for a job currently in its
+active tracking table; it never starts a replacement downloader process for
+this operation.
 
 ## Runtime Files
 - API token: `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt` or, if `LOCALAPPDATA` is unavailable, `%USERPROFILE%\AppData\Local\LzyDownloader\Server\api_token.txt`

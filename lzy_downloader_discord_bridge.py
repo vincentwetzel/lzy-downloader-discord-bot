@@ -8,13 +8,14 @@ import time
 import subprocess
 import atexit
 import logging
+import uuid
 from logging.handlers import RotatingFileHandler
 import requests
 import discord
 from discord import app_commands
 from aiohttp import web
 from dotenv import load_dotenv
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from typing import Optional, Callable, Awaitable, Any, Dict, List, Set, Tuple
 
 APP_VERSION: str = "1.2.9"
@@ -124,6 +125,47 @@ LZY_EXECUTABLE_PATH: Optional[str] = os.getenv('LZY_EXECUTABLE_PATH')
 YOUTUBE_ID_REGEX = re.compile(r"(?:youtu\.be/|v=|/shorts/|/live/)([0-9A-Za-z_-]{11})(?:\?|&|/|$)")
 NORMALIZE_URL_REGEX = re.compile(r"^https?://(www\.)?")
 QUEUE_POSITION_REGEX = re.compile(r"\s*\(Position:?\s*\d+\)", re.IGNORECASE)
+
+# These parameters are commonly added by share links, campaigns, or referral
+# layers and do not identify a different media resource. The identity helper
+# deliberately operates on URL structure only; it has no extractor/domain
+# branches. Content selectors such as `id`, `v`, `index`, and `playlist` are
+# retained because they can change the requested resource.
+GENERIC_TRACKING_QUERY_KEYS = {
+    "fbclid", "gclid", "dclid", "msclkid", "si", "feature", "pp", "is"
+}
+
+
+def download_identity(url: str) -> str:
+    """Returns a stable, extractor-independent identity for a download URL."""
+    value = str(url or "").strip()
+    parsed = urlparse(value)
+    if not parsed.scheme or not parsed.netloc:
+        return value.rstrip("/")
+
+    host = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    netloc = host
+    if port is not None and not ((parsed.scheme.lower() == "http" and port == 80)
+                                or (parsed.scheme.lower() == "https" and port == 443)):
+        netloc = f"{host}:{port}"
+
+    path = parsed.path or "/"
+    if len(path) > 1:
+        path = path.rstrip("/")
+
+    kept_query = []
+    for key, query_value in parse_qsl(parsed.query, keep_blank_values=True):
+        key_lower = key.lower()
+        if key_lower.startswith("utm_") or key_lower in GENERIC_TRACKING_QUERY_KEYS:
+            continue
+        kept_query.append((key_lower, query_value))
+    kept_query.sort()
+
+    return urlunparse((parsed.scheme.lower(), netloc, path, "", urlencode(kept_query), ""))
 
 # Global reference to prevent the socket from being garbage collected
 _lock_socket: Optional[socket.socket] = None
@@ -293,9 +335,12 @@ class LzyBot(discord.Client):
             job_data["title"] = data["title"]
             
         current_status = str(job_data["status_text"]).lower()
-        if current_status in {"completed", "complete", "failed", "stopped", "finished", "error"}:
+        if current_status in {"completed", "complete", "failed", "stopped", "cancelled", "canceled", "finished", "error"}:
             job_data["is_final"] = True
             job_data["final_status"] = current_status
+
+        if data.get("error"):
+            job_data["error"] = str(data["error"])
             
         job_data["last_webhook_time"] = time.time()
             
@@ -317,7 +362,11 @@ class LzyBot(discord.Client):
 
                 # Load backup items to prevent duplicate queueing of resumed downloads
                 backup_items = load_download_backup_items()
-                resumed_urls = {item.get("url") for item in backup_items if item.get("url")}
+                resumed_urls = {
+                    download_identity(str(item.get("url", "")))
+                    for item in backup_items
+                    if item.get("url")
+                }
 
                 missed_msgs = []
                 for i, msg in enumerate(messages):
@@ -325,7 +374,8 @@ class LzyBot(discord.Client):
                         content = msg.content.strip()
                         if is_valid_url(content):
                             # Skip if this URL is already slated to be resumed/tracked
-                            if content in resumed_urls or any(content in url or url in content for url in resumed_urls):
+                            content_identity = download_identity(content)
+                            if content_identity in resumed_urls:
                                 continue
 
                             # Check if the bot already replied to this specific request
@@ -391,6 +441,17 @@ class LzyBot(discord.Client):
             await message.channel.send("🏓 Pong! LzyDownloader Discord Bridge is online.")
             return
 
+        cancel_prefixes = ("cancel ", "/cancel ")
+        if content.lower().startswith(cancel_prefixes):
+            job_id = content.split(maxsplit=1)[1].strip()
+            success, result = await cancel_tracked_job(job_id)
+            if success:
+                await message.channel.send(f"🛑 Cancellation requested for `{job_id}`.")
+            else:
+                safe_result = discord.utils.escape_markdown(result).replace("|", "\\|")
+                await message.channel.send(f"❌ {safe_result}")
+            return
+
         if is_valid_url(content):
             sent_msg = await message.channel.send(
                 f"⏳ **Starting download:** <{content}>\n"
@@ -406,6 +467,44 @@ class LzyBot(discord.Client):
             self.loop.create_task(run_download_job(content, edit_msg, send_msg))
 
 client = LzyBot()
+
+
+def cancel_job_request(job_id: str) -> Tuple[bool, str]:
+    """Requests cancellation of a tracked job without starting a new worker."""
+    api_key = get_lzy_api_key()
+    if not api_key:
+        return False, "Failed to read `api_token.txt`. The downloader may not be running."
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    proxies = {"http": "", "https": ""}
+    try:
+        response = requests.post(
+            f"{BASE_URL}/cancel",
+            json={"job_id": job_id},
+            headers=headers,
+            timeout=10,
+            proxies=proxies,
+        )
+    except requests.exceptions.RequestException as error:
+        return False, f"Failed to reach the LzyDownloader Local API: {error}"
+
+    if response.status_code != 200:
+        detail = response.text.strip()
+        if len(detail) > 400:
+            detail = detail[:397] + "..."
+        return False, f"Local API rejected cancellation (HTTP {response.status_code}). {detail}".strip()
+
+    return True, "Cancellation requested."
+
+
+async def cancel_tracked_job(job_id: str) -> Tuple[bool, str]:
+    """Cancels a job only when it is currently tracked by this bridge."""
+    if job_id not in client.active_jobs:
+        return False, "No active Discord download was found for that job ID. Use `/downloads` to list active jobs."
+    return await asyncio.to_thread(cancel_job_request, job_id)
 
 @client.tree.command(name="ping", description="Ping the bot to check its status")
 async def ping(interaction: discord.Interaction) -> None:
@@ -467,6 +566,71 @@ async def download(interaction: discord.Interaction, url: str) -> None:
                 await interaction.channel.send(new_content)
             
     client.loop.create_task(run_download_job(url, edit_msg, send_msg))
+
+
+async def cancel_job_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> List[app_commands.Choice[str]]:
+    """Offers active bridge job IDs to the Discord cancellation command."""
+    if str(interaction.user.id) != AUTHORIZED_USER_ID:
+        return []
+
+    current_lower = current.lower()
+    choices: List[app_commands.Choice[str]] = []
+    for job_id, data in list(client.active_jobs.items()):
+        title = str(data.get("title") or data.get("url") or "download")
+        label = f"{title[:70]} — {job_id}"
+        if current_lower and current_lower not in job_id.lower() and current_lower not in title.lower():
+            continue
+        choices.append(app_commands.Choice(name=label[:100], value=job_id))
+        if len(choices) >= 25:
+            break
+    return choices
+
+
+@client.tree.command(name="downloads", description="List active downloads and their job IDs")
+async def downloads(interaction: discord.Interaction) -> None:
+    if str(interaction.user.id) != AUTHORIZED_USER_ID:
+        await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
+        return
+
+    if not client.active_jobs:
+        await interaction.response.send_message("No active downloads are currently tracked.", ephemeral=True)
+        return
+
+    lines = ["**Active downloads:**"]
+    for job_id, data in list(client.active_jobs.items())[:20]:
+        title = str(data.get("title") or data.get("url") or "Untitled download")
+        title = discord.utils.escape_markdown(title[:100]).replace("|", "\\|")
+        status = discord.utils.escape_markdown(str(data.get("status_text") or "Processing"))
+        lines.append(f"• `{job_id}` — **{title}** ({status})")
+    if len(client.active_jobs) > 20:
+        lines.append(f"…and {len(client.active_jobs) - 20} more.")
+    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+
+@client.tree.command(name="cancel", description="Cancel an active download")
+@app_commands.describe(job_id="The job ID from /downloads")
+async def cancel(interaction: discord.Interaction, job_id: str) -> None:
+    if str(interaction.user.id) != AUTHORIZED_USER_ID:
+        await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
+        return
+
+    job_id = job_id.strip()
+    if not job_id:
+        await interaction.response.send_message("❌ A job ID is required. Use `/downloads` first.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    success, message = await cancel_tracked_job(job_id)
+    if success:
+        await interaction.followup.send(f"🛑 Cancellation requested for `{job_id}`.", ephemeral=True)
+    else:
+        safe_message = discord.utils.escape_markdown(message).replace("|", "\\|")
+        await interaction.followup.send(f"❌ {safe_message}", ephemeral=True)
+
+
+cancel.autocomplete("job_id")(cancel_job_autocomplete)
 
 @client.tree.command(name="audio", description="Start a new audio-only download")
 @app_commands.describe(url="The URL of the media to download as audio")
@@ -534,10 +698,10 @@ async def retry_failed(interaction: discord.Interaction) -> None:
         return
 
     backup_file_path = get_download_backup_path()
-    retry_count = sum(
-        1 for item in load_download_backup_items()
+    retry_count = len(deduplicate_retry_items([
+        item for item in load_download_backup_items()
         if should_retry_backup_item(item)
-    )
+    ]))
     if retry_count == 0:
         await interaction.response.send_message(
             f"No failed or stopped recovery jobs were found in `{backup_file_path}`.",
@@ -656,10 +820,11 @@ def get_backup_item_download_type(item: Dict[str, Any]) -> str:
 
 def find_backup_item(url: str, download_type: str) -> Optional[Dict[str, Any]]:
     """Finds a matching item in the current server-mode backup file."""
+    requested_identity = download_identity(url)
     for item in load_download_backup_items():
         item_url = str(item.get("url", ""))
         if (
-            (url in item_url or item_url in url)
+            download_identity(item_url) == requested_identity
             and get_backup_item_download_type(item) == download_type
         ):
             return item
@@ -704,6 +869,21 @@ def is_completed_backup_item(item: Dict[str, Any]) -> bool:
         pass
 
     return False
+
+
+def deduplicate_retry_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keeps one retry record per generic URL identity and download type."""
+    unique_items: List[Dict[str, Any]] = []
+    seen: Set[Tuple[str, str]] = set()
+    for item in items:
+        url = str(item.get("url", "")).strip()
+        key = (download_identity(url), get_backup_item_download_type(item))
+        if not url or key in seen:
+            logger.warning("Skipping duplicate recovery entry for URL identity %s", key[0])
+            continue
+        seen.add(key)
+        unique_items.append(item)
+    return unique_items
 
 
 def prepare_download_backup_for_recovery(
@@ -905,7 +1085,9 @@ async def resume_backed_up_downloads_on_startup(
             return
 
         if force:
-            retry_items = [item for item in items if should_retry_backup_item(item)]
+            retry_items = deduplicate_retry_items(
+                [item for item in items if should_retry_backup_item(item)]
+            )
             keep_items = [
                 item for item in items
                 if item.get("url") and not should_retry_backup_item(item) and not is_completed_backup_item(item)
@@ -1039,10 +1221,19 @@ async def run_download_job(
     job_registered: bool = False
 ) -> None:
     """Enqueues a single download via the local API and polls until it finishes."""
-    job_key = str(job_id) if job_registered and job_id else None
+    # Register before enqueueing. The C++ validator can reject a URL before the
+    # /enqueue response returns, so waiting for the server-generated ID loses
+    # the terminal failure webhook and leaves the Discord task orphaned.
+    if not skip_enqueue and not job_id:
+        job_id = str(uuid.uuid4())
+    job_key = str(job_id) if job_id else None
     if job_registered and not job_key:
         await edit_msg("? Missing job_id for resumed download.")
         return
+
+    if not job_registered and job_key:
+        await register_active_job(job_key, url)
+        job_registered = True
     async with client.launch_lock:
         try:
             # Ensure the API is running before we queue
@@ -1083,6 +1274,9 @@ async def run_download_job(
         
         if job_id:
             payload["job_id"] = job_id
+            # LocalApiServer historically accepts `id`; keep the explicit
+            # caller ID in that field so validation webhooks match this job.
+            payload["id"] = job_id
 
         # Enqueue the download
         try:
@@ -1095,6 +1289,8 @@ async def run_download_job(
                 proxies=proxies
             )
             if res.status_code != 200:
+                if job_key:
+                    await unregister_active_job(job_key)
                 raw_err = res.text
                 if len(raw_err) > 500:
                     raw_err = raw_err[:497] + "..."
@@ -1104,17 +1300,26 @@ async def run_download_job(
                 
             try:
                 res_data = res.json()
-                job_key = res_data.get("job_id") or res_data.get("id")
+                response_job_key = res_data.get("job_id") or res_data.get("id")
             except ValueError:
-                job_key = None
+                response_job_key = None
                 
-            if not job_key:
+            if not response_job_key:
+                if job_registered and job_key:
+                    await unregister_active_job(job_key)
                 await edit_msg("❌ API response missing 'job_id'. Please update the C++ backend.")
                 return
-                
-            job_key = str(job_key)
+
+            response_job_key = str(response_job_key)
+            if response_job_key != job_key:
+                if job_key:
+                    await unregister_active_job(job_key)
+                job_key = response_job_key
+                await register_active_job(job_key, url)
             
         except requests.exceptions.RequestException as e:
+            if job_key:
+                await unregister_active_job(job_key)
             await edit_msg(f"❌ Failed to reach the LzyDownloader Local API.\n`{e}`")
             return
     else:
@@ -1123,9 +1328,6 @@ async def run_download_job(
             return
         job_key = str(job_id)
         
-    if not job_registered:
-        await register_active_job(job_key, url)
-
     try:
         while job_key in client.active_jobs:
             current_data = client.active_jobs[job_key]
@@ -1142,7 +1344,14 @@ async def run_download_job(
                 if final_status in {"completed", "complete", "finished"}:
                     final_msg = f"✅ **Download Complete:** {title_str}"
                 else:
-                    final_msg = f"❌ **Download {final_status.title()}:** {title_str}"
+                    error_text = current_data.get("error", "")
+                    if len(error_text) > 700:
+                        error_text = error_text[:697] + "..."
+                    if error_text:
+                        error_text = discord.utils.escape_markdown(error_text).replace("|", "\\|")
+                        final_msg = f"❌ **Download failed:** {title_str}\n**Reason:** {error_text}"
+                    else:
+                        final_msg = f"❌ **Download {final_status.title()}:** {title_str}"
                     
                 if len(final_msg) > 1950:
                     final_msg = final_msg[:1950] + "...\n[Message Truncated]"

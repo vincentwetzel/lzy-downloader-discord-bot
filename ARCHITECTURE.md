@@ -8,6 +8,7 @@ The project is split into two distinct components: the frontend Python Discord b
 - **Framework:** C++ Qt6
 - **Features:**
   - Exposes `POST /enqueue` to add downloads to the queue, including the requested download type (`video` or `audio`).
+  - Exposes authenticated `POST /cancel` with `job_id` to route cancellation through the C++ download manager.
   - Exposes `GET /status` to retrieve active jobs with URL, title, progress, speed, ETA, and status data.
   - Pushes real-time state changes to the Discord bot's webhook server.
   - Persists server-mode queue state in `downloads_backup.json` so interrupted or failed work can be inspected or recovered later.
@@ -20,7 +21,7 @@ The project is split into two distinct components: the frontend Python Discord b
 - **Windows launchers:** `start_lzy_downloader_discord_bridge.bat` and `stop_lzy_downloader_discord_bridge.bat`
 - **Windows supervision:** The start launcher hands the supervisor loop to a minimized detached command child, then returns immediately. That supervisor restarts the bridge after an unexpected exit, including failures caused by a system sleep/wake transition; the stop launcher writes a marker to prevent an intentional shutdown from being restarted.
 - **Responsibilities:**
-  - Handles `/download`, `/audio`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop` slash commands.
+  - Handles `/download`, `/audio`, `/downloads`, `/cancel`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop` slash commands.
   - Accepts authorized direct-message URLs as standard video downloads.
   - Scans recent authorized DM history on startup for unacknowledged URL requests sent while the bot was offline.
   - Notifies the authorized user via DM when it successfully connects to Discord or gracefully shuts down.
@@ -40,13 +41,16 @@ The project is split into two distinct components: the frontend Python Discord b
 - **Environment Template:** `.env.example` documents the required bridge variables (`DISCORD_BOT_TOKEN`, `AUTHORIZED_USER_ID`, and `LZY_EXECUTABLE_PATH`) for local setup.
 
 ## Download Flow
-1. An authorized user sends `/download`, `/audio`, or a URL in DM.
+1. An authorized user sends `/download`, `/audio`, or a URL in DM. Active job IDs can be listed with `/downloads` and cancelled with `/cancel`; DMs also accept `cancel <job_id>`.
 2. The bot validates the URL and checks whether the local API is already healthy.
 3. If needed, the bot launches LzyDownloader with `--server --exit-after`.
 4. The bot reads the local API token and sends `POST /enqueue` with the URL, download type, and an explicit `override_archive` confirmation for intentional bot requests.
+   - Cancellation uses the same bearer token and sends `POST /cancel` with `job_id`; the bridge waits for the C++ `Cancelled` webhook state before closing its progress task.
+   - New jobs use a bridge-generated UUID in both `job_id` and `id` before `/enqueue` is sent. If the backend rejects the URL asynchronously, the rejection webhook can therefore update and clean up the correct Discord job.
 5. The bot receives instant webhook POST requests on `127.0.0.1:8766` and smoothly edits the original Discord message with progress, including the job's active queue position. (Polling is strictly prohibited).
    - *Note on URL Expansion:* If LzyDownloader expands a URL or playlist (which spawns a child item with a new internal ID), the bot dynamically routes the incoming webhook payloads back to the original tracked job using `parent_id` or fuzzy URL matching.
-6. When the job completes or leaves the active queue, the bot updates the original message with a final completion or failure status.
+6. When the job completes or leaves the active queue, the bot updates the original message with a final completion or failure status. Backend error text is included when available, then the job is removed from `active_jobs`.
+   - Non-interactive validation failures use the caller-supplied job ID, include the generic backend diagnostic, update the Discord message, and are removed from `active_jobs` through the normal terminal cleanup path.
 
 ## Offline DM Catch-Up
 - After Discord reports the bridge as ready, the bot sends the authorized user an online DM and reads the most recent DM messages.
@@ -62,8 +66,40 @@ The project is split into two distinct components: the frontend Python Discord b
 - Failed, stopped, or errored entries are treated as stranded jobs and are not assumed to auto-run safely.
 - Completed entries are pruned from the backup file during startup recovery so they do not linger as resumable work.
 - `/retry_failed` archives the previous backup, preserves still-queued resumable entries, and re-enqueues failed, stopped, or errored URLs for fresh tracking.
+- Before `/retry_failed` enqueues work, the bridge keeps one record per generic normalized URL identity and download type. The same identity is used when comparing offline DM requests with backup entries, so tracking/share query changes cannot create a second recovery job.
 - `/clear_failed` archives the previous backup and rewrites the backup file with only resumable queued entries, removing failed, stopped, errored, and completed entries.
 - Bridge-created archive files use names like `downloads_backup.json.discord_recovery_<timestamp>.bak` and `downloads_backup.json.cleared_failed_<timestamp>.bak`.
+
+## Local API Contract
+
+- The C++ API listens on `127.0.0.1:8765`; the bridge webhook listener accepts `POST /webhook` on `127.0.0.1:8766`.
+- API requests use the bearer token stored in `api_token.txt`. Enqueue requests include `url`, `download_type`, `override_archive: true`, and a caller-supplied `job_id`/`id`.
+- Cancellation sends `POST /cancel` with `{ "job_id": "..." }`. Cancellation is only sent for a job currently tracked by the bridge; the terminal result arrives through the webhook.
+- Webhook payloads may identify a job with `job_id`, `id`, `jobId`, or `lzy_id`, and may include `parent_id`, `url`, `status`, `title`, progress fields, and `error`.
+- The bridge registers a UUID locally before sending `/enqueue`. If the API returns a different ID, the temporary registration is replaced with the server ID; if the API rejects the request before returning a response, the caller ID remains available for matching the terminal webhook.
+- The bridge treats `completed`, `complete`, `finished`, `failed`, `stopped`, `error`, `cancelled`, and `canceled` as terminal statuses. A webhook `error` value is retained and included in the final Discord diagnostic after markdown escaping and length limiting.
+
+### Request examples
+
+```http
+POST /enqueue
+Authorization: Bearer <api-token>
+Content-Type: application/json
+
+{"url":"https://example.test/media","download_type":"video","override_archive":true,"job_id":"<uuid>","id":"<uuid>"}
+```
+
+```http
+POST /cancel
+Authorization: Bearer <api-token>
+Content-Type: application/json
+
+{"job_id":"<tracked-job-id>"}
+```
+
+The bridge does not poll `GET /status` for progress. `/status` may be used by
+the local application for diagnostics, but Discord progress and terminal state
+are driven exclusively by webhook events.
 
 ## Runtime Files
 - `.env` in the bridge directory stores `DISCORD_BOT_TOKEN`, `AUTHORIZED_USER_ID`, and `LZY_EXECUTABLE_PATH`.

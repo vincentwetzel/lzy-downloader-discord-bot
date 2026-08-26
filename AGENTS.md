@@ -7,7 +7,7 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
 
 - **Lifecycle:** Runs continuously until `/stop`, `stop_lzy_downloader_discord_bridge.bat`, or process shutdown closes it. The start batch file returns immediately after handing supervision to a detached child command process.
 - **Tasks:**
-  - Listens for `/download`, `/audio`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop` commands from the authorized Discord user.
+  - Listens for `/download`, `/audio`, `/downloads`, `/cancel`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop` commands from the authorized Discord user.
   - Accepts authorized direct-message URLs as standard video download requests.
   - Scans recent authorized direct messages on startup and queues unacknowledged offline URL requests oldest-first, while skipping URLs already present in the recovery backup queue to avoid duplicate re-queueing.
   - Sends online and offline notification DMs to the authorized user when connecting or gracefully shutting down.
@@ -16,9 +16,14 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
   - Hosts an asynchronous webhook listener (`aiohttp`) to receive push updates from the C++ app.
   - Formats webhook JSON payloads into ASCII progress bars, displays real-time queue positions, and updates Discord messages with a debounce mechanism.
   - Tracks active download jobs and updates the original message with a final status when individual downloads complete.
+  - Sends authenticated cancellation requests for active job IDs and recognizes `Cancelled`/`Canceled` webhook states as terminal.
+  - Generates and registers a UUID before each new enqueue request, passing it as both `job_id` and `id` so asynchronous backend validation failures remain associated with the originating Discord message.
+  - Pre-registers caller-supplied job IDs before enqueueing so asynchronous validation failures can be matched, reported, and removed immediately.
   - Pre-registers all queued recovery jobs before launching the C++ worker so startup webhook events cannot arrive before bridge tracking exists.
   - Sanitizes dynamic webhook text (like titles and status updates) to prevent accidental Discord markdown rendering.
   - Reads `downloads_backup.json` from `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` or the `%USERPROFILE%\AppData\Local` fallback path to resume startup work, prune completed backup entries, and retry or clear inactive recovery jobs.
+  - Uses extractor-independent URL identity normalization to avoid re-queueing equivalent recovery entries or offline DM requests that differ only by tracking/share parameters.
+  - Includes backend `error` diagnostics in terminal Discord messages when supplied by a webhook.
   - Archives previous backup files before recovery cleanup so recovery state is not discarded silently.
   - Uses a local single-instance lock so only one bridge process runs at a time.
 
