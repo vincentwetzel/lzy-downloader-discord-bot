@@ -40,7 +40,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 - **Backup Archiving:** Recovery and clear operations preserve old `downloads_backup.json` files as `.bak` archives and prune older bridge-created archives.
 - **Lifecycle Notifications:** Sends a DM to the authorized user when the bot connects to Discord and when it gracefully shuts down.
 - **Shared Preferences:** Downloads use the same LzyDownloader preferences configured in the GUI; the bridge does not maintain a separate settings file.
-- **Live Progress Bars:** Updates Discord messages with an ASCII progress bar, ETA, download speed, dynamic queue position, and status.
+- **Live Progress Bars:** Updates Discord messages with an ASCII progress bar, ETA, download speed, dynamic queue position, and status. For multi-stream downloads, the bridge prefers the C++ `overall_progress` field because ordinary `progress` is scoped to the current stream and can reset during video/audio handoff; stale lower aggregate updates are ignored while the job is active.
 - **Unsupported-link cleanup:** Generic non-interactive validation failures from LzyDownloader are delivered as terminal webhook errors, shown with the diagnostic in Discord, and removed from active bridge tracking immediately.
 - **Early Job Tracking:** Each enqueue request receives a bridge-generated job ID before the API call, so validation failures that arrive by webhook can still be matched to the original Discord message.
 - **Completion Status:** Updates the original Discord progress message with a final completion or failure status when the download finishes.
@@ -104,6 +104,11 @@ Once the bot is online, open Discord and run:
 ```
 
 The bot starts the download locally on your PC and reports progress in Discord. Use `/downloads` to view tracked job IDs, `/cancel` to request cancellation, `/retry_failed` to requeue failed, stopped, or errored recovery jobs, and `/clear_failed` to remove inactive backup entries after archiving the previous backup.
+
+The bot receives progress and terminal states through the local webhook at
+`127.0.0.1:8766/webhook`; it does not poll the C++ `/status` endpoint for live
+Discord updates. Cancellation remains pending until the backend reports a
+`Cancelled` or `Canceled` terminal state.
 
 For direct messages, send `cancel <job-id>` to request cancellation. The bridge
 only forwards cancellation for a job currently in its

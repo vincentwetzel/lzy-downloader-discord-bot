@@ -15,6 +15,7 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
   - Reads the local bearer token from `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`, falling back to `%USERPROFILE%\AppData\Local\LzyDownloader\Server\api_token.txt` if `LOCALAPPDATA` is unavailable.
   - Hosts an asynchronous webhook listener (`aiohttp`) to receive push updates from the C++ app.
   - Formats webhook JSON payloads into ASCII progress bars, displays real-time queue positions, and updates Discord messages with a debounce mechanism.
+  - Uses the C++ `overall_progress` webhook field for multi-stream jobs so Discord percentages remain monotonic across video/audio stream handoff.
   - Tracks active download jobs and updates the original message with a final status when individual downloads complete.
   - Sends authenticated cancellation requests for active job IDs and recognizes `Cancelled`/`Canceled` webhook states as terminal.
   - Generates and registers a UUID before each new enqueue request, passing it as both `job_id` and `id` so asynchronous backend validation failures remain associated with the originating Discord message.

@@ -31,6 +31,9 @@ changes documented in this repository.
   parameters are ignored while content-selection parameters are retained.
 - `/retry_failed` deduplicates recovery entries by normalized URL identity and
   download type before submitting new jobs.
+- Active Discord progress prefers the C++ `overall_progress` webhook field for
+  multi-stream downloads and ignores regressive aggregate updates, preventing
+  percentage resets during video/audio handoff or webhook reordering.
 - Recovery documentation now specifies the authenticated local API contract,
   webhook terminal states, request payloads, and fallback runtime paths.
 
@@ -42,4 +45,3 @@ changes documented in this repository.
   cancellation.
 - Dynamic titles, statuses, and backend diagnostics continue to be escaped
   before being rendered in Discord messages.
-

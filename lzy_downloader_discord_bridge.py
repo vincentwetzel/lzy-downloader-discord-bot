@@ -8,6 +8,7 @@ import time
 import subprocess
 import atexit
 import logging
+import math
 import uuid
 from logging.handlers import RotatingFileHandler
 import requests
@@ -125,6 +126,10 @@ LZY_EXECUTABLE_PATH: Optional[str] = os.getenv('LZY_EXECUTABLE_PATH')
 YOUTUBE_ID_REGEX = re.compile(r"(?:youtu\.be/|v=|/shorts/|/live/)([0-9A-Za-z_-]{11})(?:\?|&|/|$)")
 NORMALIZE_URL_REGEX = re.compile(r"^https?://(www\.)?")
 QUEUE_POSITION_REGEX = re.compile(r"\s*\(Position:?\s*\d+\)", re.IGNORECASE)
+TERMINAL_WEBHOOK_STATUSES = frozenset({
+    "completed", "complete", "failed", "stopped", "cancelled", "canceled",
+    "finished", "error",
+})
 
 # These parameters are commonly added by share links, campaigns, or referral
 # layers and do not identify a different media resource. The identity helper
@@ -321,10 +326,37 @@ class LzyBot(discord.Client):
             
         if "queue_position" in data:
             job_data["queue_position"] = data["queue_position"]
-            
+
+        incoming_status = str(data.get("status") or job_data.get("status_text") or "").lower()
+        is_terminal_update = incoming_status in TERMINAL_WEBHOOK_STATUSES
+        overall_progress = None
+        if "overall_progress" in data and data["overall_progress"] is not None:
+            try:
+                candidate = float(data["overall_progress"])
+                if math.isfinite(candidate) and 0.0 <= candidate <= 100.0:
+                    previous = job_data.get("overall_progress")
+                    if (not is_terminal_update and previous is not None
+                            and candidate < float(previous)):
+                        logger.debug(
+                            "Ignoring regressive aggregate progress for %s: %.2f -> %.2f",
+                            job_key, float(previous), candidate,
+                        )
+                        candidate = float(previous)
+                    overall_progress = candidate
+                    job_data["overall_progress"] = candidate
+            except (TypeError, ValueError):
+                logger.warning("Ignoring invalid overall_progress for webhook job %s", job_key)
+
         if "progress" in data and data["progress"] is not None:
-            job_data["progress"] = data["progress"]
-            
+            # Combined video/audio downloads report per-stream progress on
+            # the ordinary field, which resets when yt-dlp switches streams.
+            # Prefer the C++ aggregate for Discord while retaining the raw
+            # field for single-stream and terminal updates.
+            job_data["progress"] = (
+                overall_progress if overall_progress is not None and not is_terminal_update
+                else data["progress"]
+            )
+
         if "speed" in data and data["speed"] is not None:
             job_data["speed"] = data["speed"]
             
@@ -335,7 +367,7 @@ class LzyBot(discord.Client):
             job_data["title"] = data["title"]
             
         current_status = str(job_data["status_text"]).lower()
-        if current_status in {"completed", "complete", "failed", "stopped", "cancelled", "canceled", "finished", "error"}:
+        if current_status in TERMINAL_WEBHOOK_STATUSES:
             job_data["is_final"] = True
             job_data["final_status"] = current_status
 
@@ -1039,6 +1071,7 @@ def build_active_job_data(url: str) -> Dict[str, Any]:
         "status_text": "Processing",
         "queue_position": None,
         "progress": 0.0,
+        "overall_progress": None,
         "speed": "",
         "eta": "",
         "title": "",
