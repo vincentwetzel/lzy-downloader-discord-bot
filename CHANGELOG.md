@@ -6,6 +6,14 @@ changes documented in this repository.
 
 ## Unreleased
 
+### Documentation
+
+- Documented explicit `aiohttp` installation, dynamic `.env` reloads before
+  worker launch, Unicode progress-bar rendering, and the sensitive contents of
+  diagnostic logs.
+- Clarified that API token discovery checks both server-mode and GUI token
+  locations, validating candidates against the local API.
+
 ### Added
 
 - Added `/downloads` to list up to 20 active bridge jobs with private job IDs,

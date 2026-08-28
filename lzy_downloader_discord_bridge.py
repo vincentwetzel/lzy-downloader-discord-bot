@@ -1006,10 +1006,14 @@ def check_api_health() -> None:
         pass  # Some other issue, but we'll try re-launching anyway.
 
     # If we're here, the app is not running or not responding correctly. Launch it.
-    if not LZY_EXECUTABLE_PATH or not os.path.exists(LZY_EXECUTABLE_PATH):
+    # Re-read the .env file to allow dynamic updates to LZY_EXECUTABLE_PATH
+    load_dotenv(dotenv_path=env_path, override=True)
+    lzy_executable_path = os.getenv('LZY_EXECUTABLE_PATH')
+    
+    if not lzy_executable_path or not os.path.exists(lzy_executable_path):
         raise RuntimeError(
             "**LzyDownloader Not Found.**\nExecutable not found at the "
-            f"configured path:\n`{LZY_EXECUTABLE_PATH}`\n\n"
+            f"configured path:\n`{lzy_executable_path}`\n\n"
             "Please ensure `LZY_EXECUTABLE_PATH` is set correctly in your `.env` file."
         )
 
@@ -1022,11 +1026,11 @@ def check_api_health() -> None:
             pass
 
     print("LzyDownloader not detected. Launching in server mode...")
-    app_dir = os.path.dirname(LZY_EXECUTABLE_PATH)
+    app_dir = os.path.dirname(lzy_executable_path)
     # CREATE_NO_WINDOW flag prevents a console from flashing on Windows
     creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
     _lzy_process = subprocess.Popen(
-        [LZY_EXECUTABLE_PATH, "--server", "--exit-after"], 
+        [lzy_executable_path, "--server", "--exit-after"], 
         cwd=app_dir, 
         creationflags=creation_flags
     )

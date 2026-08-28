@@ -12,9 +12,9 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
   - Scans recent authorized direct messages on startup and queues unacknowledged offline URL requests oldest-first, while skipping URLs already present in the recovery backup queue to avoid duplicate re-queueing.
   - Sends online and offline notification DMs to the authorized user when connecting or gracefully shutting down.
   - Checks the health of the local C++ API, launches the Download Worker if it is not running, and ensures it is properly terminated when the bridge shuts down.
-  - Reads the local bearer token from `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`, falling back to `%USERPROFILE%\AppData\Local\LzyDownloader\Server\api_token.txt` if `LOCALAPPDATA` is unavailable.
+  - Reads and validates the local bearer token from the server token path (`%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`, with the `%USERPROFILE%\AppData\Local` fallback) and then the GUI token path (`%LOCALAPPDATA%\LzyDownloader\api_token.txt`, with the same fallback).
   - Hosts an asynchronous webhook listener (`aiohttp`) to receive push updates from the C++ app.
-  - Formats webhook JSON payloads into ASCII progress bars, displays real-time queue positions, and updates Discord messages with a debounce mechanism.
+  - Formats webhook JSON payloads into compact Unicode progress bars, displays real-time queue positions, and updates Discord messages with a debounce mechanism.
   - Uses the C++ `overall_progress` webhook field for multi-stream jobs so Discord percentages remain monotonic across video/audio stream handoff.
   - Tracks active download jobs and updates the original message with a final status when individual downloads complete.
   - Sends authenticated cancellation requests for active job IDs and recognizes `Cancelled`/`Canceled` webhook states as terminal.
@@ -27,6 +27,8 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
   - Includes backend `error` diagnostics in terminal Discord messages when supplied by a webhook.
   - Archives previous backup files before recovery cleanup so recovery state is not discarded silently.
   - Uses a local single-instance lock so only one bridge process runs at a time.
+  - Reloads `.env` immediately before launching the worker, allowing an updated `LZY_EXECUTABLE_PATH` to be used without restarting the bridge.
+  - Writes bridge, library, exception, and incoming webhook diagnostics to `bot.log`; log files may contain URLs, titles, and backend errors and must be treated as sensitive local data.
 
 ## 2. The Download Worker Agent (C++ App)
 The headless instance of the LzyDownloader Qt6 application.
@@ -44,3 +46,7 @@ The headless instance of the LzyDownloader Qt6 application.
 ## 3. Development Requirements
 
 All code modifying or interacting with these agents must strictly adhere to the guidelines established in CODING_STANDARDS.md.
+
+Documentation must remain synchronized across this file, `README.md`,
+`ARCHITECTURE.md`, and `CHANGELOG.md` whenever command behavior, lifecycle,
+local API usage, recovery behavior, or runtime files change.

@@ -40,7 +40,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 - **Backup Archiving:** Recovery and clear operations preserve old `downloads_backup.json` files as `.bak` archives and prune older bridge-created archives.
 - **Lifecycle Notifications:** Sends a DM to the authorized user when the bot connects to Discord and when it gracefully shuts down.
 - **Shared Preferences:** Downloads use the same LzyDownloader preferences configured in the GUI; the bridge does not maintain a separate settings file.
-- **Live Progress Bars:** Updates Discord messages with an ASCII progress bar, ETA, download speed, dynamic queue position, and status. For multi-stream downloads, the bridge prefers the C++ `overall_progress` field because ordinary `progress` is scoped to the current stream and can reset during video/audio handoff; stale lower aggregate updates are ignored while the job is active.
+- **Live Progress Bars:** Updates Discord messages with a compact Unicode progress bar, ETA, download speed, dynamic queue position, and status. For multi-stream downloads, the bridge prefers the C++ `overall_progress` field because ordinary `progress` is scoped to the current stream and can reset during video/audio handoff; stale lower aggregate updates are ignored while the job is active.
 - **Unsupported-link cleanup:** Generic non-interactive validation failures from LzyDownloader are delivered as terminal webhook errors, shown with the diagnostic in Discord, and removed from active bridge tracking immediately.
 - **Early Job Tracking:** Each enqueue request receives a bridge-generated job ID before the API call, so validation failures that arrive by webhook can still be matched to the original Discord message.
 - **Completion Status:** Updates the original Discord progress message with a final completion or failure status when the download finishes.
@@ -52,7 +52,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 - **Sleep/Wake Recovery:** The Windows start script supervises the bridge and automatically restarts it if a sleep/wake-related gateway or process failure causes it to exit. The stop script disables this restart loop before shutting it down.
 - **Non-Blocking Launcher:** The Windows start script returns immediately after starting its detached supervisor, while the supervisor continues managing the bridge in the background.
 - **Auto-Shutdown & Cleanup:** The C++ app automatically closes when the queue is finished. If the bot crashes or is stopped, any lingering headless C++ processes are terminated to prevent orphaned background work.
-- **Persistent Diagnostics:** Bridge output, `discord.py`/`aiohttp` diagnostics, and uncaught Python tracebacks are written to `bot.log` beside the bridge script. The active file rotates at 10 MB; archived files are timestamped and five are retained.
+- **Persistent Diagnostics:** Bridge output, `discord.py`/`aiohttp` diagnostics, and uncaught Python tracebacks are written to `bot.log` beside the bridge script. Incoming webhook payloads are also logged for troubleshooting, so protect this file because it may contain requested URLs, titles, or backend error text. The active file rotates at 10 MB; archived files are timestamped and five are retained.
 
 ## Prerequisites
 - Python 3.9+ (Required for `asyncio.to_thread` support)
@@ -72,7 +72,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 1. Clone this repository.
 2. Install the required Python packages:
    ```bash
-   pip install discord.py python-dotenv requests
+   pip install discord.py aiohttp python-dotenv requests
    ```
 3. Copy `.env.example` to `.env` in the root of the project, then fill in your Discord bot token, authorized user ID, and LzyDownloader executable path:
    ```env
@@ -103,7 +103,7 @@ Once the bot is online, open Discord and run:
 /cancel job_id:<job-id-from-downloads>
 ```
 
-The bot starts the download locally on your PC and reports progress in Discord. Use `/downloads` to view tracked job IDs, `/cancel` to request cancellation, `/retry_failed` to requeue failed, stopped, or errored recovery jobs, and `/clear_failed` to remove inactive backup entries after archiving the previous backup.
+The bot starts the download locally on your PC and reports progress in Discord. Use `/downloads` to view tracked job IDs, `/cancel` to request cancellation, `/retry_failed` to requeue failed, stopped, or errored recovery jobs, and `/clear_failed` to remove inactive backup entries after archiving the previous backup. If the worker is unavailable, the bridge reloads `LZY_EXECUTABLE_PATH` from `.env` before attempting a launch, so path changes take effect without restarting the bridge.
 
 The bot receives progress and terminal states through the local webhook at
 `127.0.0.1:8766/webhook`; it does not poll the C++ `/status` endpoint for live
@@ -116,11 +116,11 @@ active tracking table; it never starts a replacement downloader process for
 this operation.
 
 ## Runtime Files
-- API token: `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt` or, if `LOCALAPPDATA` is unavailable, `%USERPROFILE%\AppData\Local\LzyDownloader\Server\api_token.txt`
+- API token: the bridge checks `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt` first, then `%LOCALAPPDATA%\LzyDownloader\api_token.txt`; if `LOCALAPPDATA` is unavailable, it checks the corresponding paths under `%USERPROFILE%\AppData\Local\LzyDownloader`
 - Server-mode backup queue: `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` or, if `LOCALAPPDATA` is unavailable, `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json`
 - Bridge-created recovery archives: `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json.*.bak` or, if `LOCALAPPDATA` is unavailable, `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json.*.bak`
 - Example environment template: `.env.example`
-- Bridge log: `bot.log` beside `lzy_downloader_discord_bridge.py`; rotated archives use names such as `bot_2026-08-12_231530.log` and five are retained
+- Bridge log: `bot.log` beside `lzy_downloader_discord_bridge.py`; rotated archives use names such as `bot_2026-08-12_231530.log` and five are retained. Logs can contain webhook URLs, titles, and errors; restrict access to them.
 
 ## Architecture
 Read [ARCHITECTURE.md](ARCHITECTURE.md) for technical context on the local API schema, auth flow, recovery behavior, and state management. Read [AGENTS.md](AGENTS.md) for the active background actors.

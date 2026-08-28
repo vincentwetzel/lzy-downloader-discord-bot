@@ -31,11 +31,11 @@ The project is split into two distinct components: the frontend Python Discord b
   - Tracks active download jobs so the user receives completion and queue-empty notifications.
   - Prevents duplicate bot processes by binding a local single-instance lock socket.
   - Sanitizes dynamic data (video titles, API errors, status texts) from the C++ API to prevent unintended Discord markdown or spoiler formatting.
-  - Writes bridge output, Discord/aiohttp library diagnostics, and uncaught exception tracebacks to `bot.log` beside the entrypoint. The active file rotates at 10 MB into timestamped archives, retaining five; sensitive webhook payload bodies are not logged.
+  - Writes bridge output, Discord/aiohttp library diagnostics, incoming webhook payloads, and uncaught exception tracebacks to `bot.log` beside the entrypoint. The active file rotates at 10 MB into timestamped archives, retaining five. Because webhook payloads can contain URLs, titles, or backend errors, the log file must be treated as local-sensitive data.
 
 ## Security & Authentication
 - **Local Bind Only:** The C++ API server only listens on localhost (`127.0.0.1`), preventing external network access.
-- **Bearer Token Auth:** On startup, the C++ application generates a random API key and writes it to `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`. The Python bot reads this file and includes the token in the `Authorization: Bearer <token>` header for local API requests. If `LOCALAPPDATA` is missing, the bridge falls back to `%USERPROFILE%\AppData\Local` for the same server files.
+- **Bearer Token Auth:** The C++ application generates a random API key and writes it to an AppData token file. The Python bot checks the server token path (`%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`) first, then the GUI token path (`%LOCALAPPDATA%\LzyDownloader\api_token.txt`), validates candidates against the local API, and includes the working token in the `Authorization: Bearer <token>` header. If `LOCALAPPDATA` is missing, both paths use the `%USERPROFILE%\AppData\Local` fallback.
 - **User Authorization:** The bridge requires `AUTHORIZED_USER_ID` and rejects commands or DMs from any other Discord user.
 - **Local Single Instance:** The bridge binds a local UDP socket on `127.0.0.1:48765` to prevent multiple bot processes from issuing competing requests.
 - **Environment Template:** `.env.example` documents the required bridge variables (`DISCORD_BOT_TOKEN`, `AUTHORIZED_USER_ID`, and `LZY_EXECUTABLE_PATH`) for local setup.
@@ -73,7 +73,7 @@ The project is split into two distinct components: the frontend Python Discord b
 ## Local API Contract
 
 - The C++ API listens on `127.0.0.1:8765`; the bridge webhook listener accepts `POST /webhook` on `127.0.0.1:8766`.
-- API requests use the bearer token stored in `api_token.txt`. Enqueue requests include `url`, `download_type`, `override_archive: true`, and a caller-supplied `job_id`/`id`.
+- API requests use a bearer token discovered from the server or GUI `api_token.txt` path and validated against the local API. Enqueue requests include `url`, `download_type`, `override_archive: true`, and a caller-supplied `job_id`/`id`.
 - Cancellation sends `POST /cancel` with `{ "job_id": "..." }`. Cancellation is only sent for a job currently tracked by the bridge; the terminal result arrives through the webhook.
 - Webhook payloads may identify a job with `job_id`, `id`, `jobId`, or `lzy_id`, and may include `parent_id`, `url`, `status`, `title`, progress fields, and `error`.
 - Multi-stream webhook payloads may include `overall_progress` as a finite percentage from 0 through 100; the bridge uses that field for active Discord rendering because the ordinary `progress` field is scoped to the currently transferring stream and can reset at video/audio handoff. Regressive aggregate updates are ignored while the job remains active, while terminal updates may set the final raw progress value.
@@ -102,9 +102,14 @@ The bridge does not poll `GET /status` for progress. `/status` may be used by
 the local application for diagnostics, but Discord progress and terminal state
 are driven exclusively by webhook events.
 
+When the API is unavailable and a worker launch is required, the bridge reloads
+`.env` immediately before reading `LZY_EXECUTABLE_PATH`. This permits a changed
+executable path to be picked up by the next launch attempt without restarting
+the bridge process.
+
 ## Runtime Files
 - `.env` in the bridge directory stores `DISCORD_BOT_TOKEN`, `AUTHORIZED_USER_ID`, and `LZY_EXECUTABLE_PATH`.
-- `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt` stores the current local API bearer token, with `%USERPROFILE%\AppData\Local\LzyDownloader\Server\api_token.txt` as the fallback path when `LOCALAPPDATA` is unavailable.
+- `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt` is the preferred local API bearer-token path; `%LOCALAPPDATA%\LzyDownloader\api_token.txt` is also checked for GUI-managed tokens. When `LOCALAPPDATA` is unavailable, the corresponding fallback paths are under `%USERPROFILE%\AppData\Local\LzyDownloader`.
 - `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` stores LzyDownloader server-mode recovery state, with `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json` as the fallback path when `LOCALAPPDATA` is unavailable.
 - `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json.*.bak` stores bridge-created backup archives, with `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json.*.bak` as the fallback path when `LOCALAPPDATA` is unavailable.
-- `bot.log` beside `lzy_downloader_discord_bridge.py` stores active diagnostics; rotated files use timestamped names such as `bot_2026-08-12_231530.log`.
+- `bot.log` beside `lzy_downloader_discord_bridge.py` stores active diagnostics, including incoming webhook payloads; rotated files use timestamped names such as `bot_2026-08-12_231530.log`. Restrict access because entries may contain requested URLs, titles, and backend errors.
