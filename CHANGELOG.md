@@ -27,6 +27,10 @@ changes documented in this repository.
 
 ### Changed
 
+- Prolonged Discord Gateway disconnections now cause a clean bridge exit after
+  a bounded recovery window, allowing the detached supervisor to restart the
+  process after sleep/wake failures. The start launcher also avoids creating
+  duplicate supervisor loops.
 - Cancellation now remains pending until a terminal `Cancelled`/`Canceled`
   webhook event is received.
 - Terminal webhook handling now recognizes cancellation states and preserves

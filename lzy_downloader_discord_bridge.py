@@ -20,6 +20,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from typing import Optional, Callable, Awaitable, Any, Dict, List, Set, Tuple
 
 APP_VERSION: str = "1.2.9"
+GATEWAY_RECOVERY_TIMEOUT_SECONDS: int = 120
 
 # Load the Discord token from the .env file located in the script's directory
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -239,12 +240,20 @@ class LzyBot(discord.Client):
         self.recovery_lock: Optional[asyncio.Lock] = None
         self.active_job_count: int = 0
         self.startup_resume_started: bool = False
+        self.gateway_disconnect_started_at: Optional[float] = None
+        self.gateway_disconnect_event: Optional[asyncio.Event] = None
+        self.gateway_watchdog_task: Optional[asyncio.Task] = None
+        self.closing: bool = False
 
     async def setup_hook(self) -> None:
         # Initialize locks within the active event loop
         self.launch_lock = asyncio.Lock()
         self.jobs_lock = asyncio.Lock()
         self.recovery_lock = asyncio.Lock()
+        self.gateway_disconnect_event = asyncio.Event()
+        self.gateway_watchdog_task = self.loop.create_task(
+            self._watch_gateway_recovery()
+        )
 
         # Sync the slash commands to Discord when the bot starts
         await self.tree.sync()
@@ -259,6 +268,26 @@ class LzyBot(discord.Client):
         print("Local webhook server listening on 127.0.0.1:8766")
         
         print("Bot is online and slash commands are synced!")
+
+    async def _watch_gateway_recovery(self) -> None:
+        """Exit so the launcher can restart us after a prolonged wake failure."""
+        assert self.gateway_disconnect_event is not None
+        while not self.closing:
+            await self.gateway_disconnect_event.wait()
+            if self.closing:
+                return
+
+            await asyncio.sleep(GATEWAY_RECOVERY_TIMEOUT_SECONDS)
+            if (self.gateway_disconnect_event.is_set() and not self.closing
+                    and self.gateway_disconnect_started_at is not None):
+                elapsed = time.time() - self.gateway_disconnect_started_at
+                if elapsed >= GATEWAY_RECOVERY_TIMEOUT_SECONDS:
+                    logger.error(
+                        "Discord gateway remained disconnected for %.1f seconds; "
+                        "closing so the launcher can restart the bridge.", elapsed,
+                    )
+                    await self.close()
+                    return
 
     async def handle_webhook(self, request: web.Request) -> web.Response:
         """Handles push updates from the C++ application."""
@@ -443,13 +472,25 @@ class LzyBot(discord.Client):
 
     async def on_resumed(self) -> None:
         """Logs successful gateway recovery after a network interruption or wake."""
+        self.gateway_disconnect_started_at = None
+        if self.gateway_disconnect_event is not None:
+            self.gateway_disconnect_event.clear()
         print("Discord gateway session resumed after interruption.")
 
     async def on_disconnect(self) -> None:
         """Logs gateway loss; discord.py will attempt its built-in reconnect."""
+        if not self.closing and self.gateway_disconnect_started_at is None:
+            self.gateway_disconnect_started_at = time.time()
+            if self.gateway_disconnect_event is not None:
+                self.gateway_disconnect_event.set()
         print("Discord gateway disconnected; waiting for automatic reconnect.")
 
     async def close(self) -> None:
+        if self.closing:
+            return
+        self.closing = True
+        if self.gateway_disconnect_event is not None:
+            self.gateway_disconnect_event.clear()
         if AUTHORIZED_USER_ID:
             try:
                 user = await self.fetch_user(int(AUTHORIZED_USER_ID))
