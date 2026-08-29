@@ -357,8 +357,18 @@ class LzyBot(discord.Client):
             else:
                 print(f"[Webhook ERROR] Rejected payload: Job {job_key} not tracked by bridge.")
                 return web.Response(status=404, text="Job not tracked by bridge")
-            
+
         job_data = self.active_jobs[job_key]
+
+        # Webhooks are sent asynchronously by the C++ client.  A progress
+        # request that was queued before the terminal request can therefore
+        # arrive afterwards and regress a completed Discord message back to
+        # "Downloading...".  Terminal state is monotonic for a job; discard
+        # late non-terminal updates once completion/cancellation/failure has
+        # been observed.
+        incoming_status = str(data.get("status") or "").lower().strip()
+        if job_data.get("is_final") and incoming_status not in TERMINAL_WEBHOOK_STATUSES:
+            return web.Response(text="OK")
         
         # Only update fields that are actually provided in this specific webhook payload
         if "status" in data and data["status"]:
@@ -367,7 +377,7 @@ class LzyBot(discord.Client):
         if "queue_position" in data:
             job_data["queue_position"] = data["queue_position"]
 
-        incoming_status = str(data.get("status") or job_data.get("status_text") or "").lower()
+        incoming_status = str(data.get("status") or job_data.get("status_text") or "").lower().strip()
         is_terminal_update = incoming_status in TERMINAL_WEBHOOK_STATUSES
         overall_progress = None
         if "overall_progress" in data and data["overall_progress"] is not None:

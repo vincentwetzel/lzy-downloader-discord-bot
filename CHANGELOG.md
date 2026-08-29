@@ -48,6 +48,8 @@ changes documented in this repository.
 - Active Discord progress prefers the C++ `overall_progress` webhook field for
   multi-stream downloads and ignores regressive aggregate updates, preventing
   percentage resets during video/audio handoff or webhook reordering.
+- Terminal webhook state is now monotonic: late non-terminal progress updates
+  cannot overwrite a completed, failed, stopped, or cancelled Discord message.
 - Recovery documentation now specifies the authenticated local API contract,
   webhook terminal states, request payloads, and fallback runtime paths.
 
