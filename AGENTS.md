@@ -22,14 +22,14 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
   - Generates and registers a UUID before each new enqueue request, passing it as both `job_id` and `id` so asynchronous backend validation failures remain associated with the originating Discord message.
   - Pre-registers caller-supplied job IDs before enqueueing so asynchronous validation failures can be matched, reported, and removed immediately.
   - Pre-registers all queued recovery jobs before launching the C++ worker so startup webhook events cannot arrive before bridge tracking exists.
-  - Sanitizes dynamic webhook text (like titles and status updates) to prevent accidental Discord markdown rendering.
+  - Sanitizes dynamic webhook text (like titles and status updates) to prevent accidental Discord markdown rendering, and redacts Windows absolute paths before diagnostic text is sent to Discord.
   - Reads `downloads_backup.json` from `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` or the `%USERPROFILE%\AppData\Local` fallback path to resume startup work, prune completed backup entries, and retry or clear inactive recovery jobs.
   - Uses extractor-independent URL identity normalization to avoid re-queueing equivalent recovery entries or offline DM requests that differ only by tracking/share parameters.
   - Includes backend `error` diagnostics in terminal Discord messages when supplied by a webhook.
   - Archives previous backup files before recovery cleanup so recovery state is not discarded silently.
   - Uses a local single-instance lock so only one bridge process runs at a time.
   - Reloads `.env` immediately before launching the worker, allowing an updated `LZY_EXECUTABLE_PATH` to be used without restarting the bridge.
-  - Writes bridge, library, exception, and incoming webhook diagnostics to `bot.log`; log files may contain URLs, titles, and backend errors and must be treated as sensitive local data.
+  - Writes bridge, library, exception, and incoming webhook diagnostics to `bot.log`; log files may contain URLs, titles, backend errors, and local diagnostic details and must be treated as sensitive local data. Resolved local paths must not be included in Discord-facing messages.
 
 ## 2. The Download Worker Agent (C++ App)
 The headless instance of the LzyDownloader Qt6 application.

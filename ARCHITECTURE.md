@@ -30,8 +30,8 @@ The project is split into two distinct components: the frontend Python Discord b
   - **Strictly Event-Driven:** Polling the local API (e.g., `GET /status`) for live progress updates is explicitly forbidden. All state tracking must rely solely on the push updates provided by the webhook server.
   - Tracks active download jobs so the user receives completion and queue-empty notifications.
   - Prevents duplicate bot processes by binding a local single-instance lock socket.
-  - Sanitizes dynamic data (video titles, API errors, status texts) from the C++ API to prevent unintended Discord markdown or spoiler formatting.
-  - Writes bridge output, Discord/aiohttp library diagnostics, incoming webhook payloads, and uncaught exception tracebacks to `bot.log` beside the entrypoint. The active file rotates at 10 MB into timestamped archives, retaining five. Because webhook payloads can contain URLs, titles, or backend errors, the log file must be treated as local-sensitive data.
+  - Sanitizes dynamic data (video titles, API errors, status texts) from the C++ API to prevent unintended Discord markdown or spoiler formatting, and redacts Windows absolute paths before diagnostics are sent to Discord.
+  - Writes bridge output, Discord/aiohttp library diagnostics, incoming webhook payloads, and uncaught exception tracebacks to `bot.log` beside the entrypoint. The active file rotates at 10 MB into timestamped archives, retaining five. Because webhook payloads can contain URLs, titles, backend errors, and local diagnostic details, the log file must be treated as local-sensitive data.
 
 ## Security & Authentication
 - **Local Bind Only:** The C++ API server only listens on localhost (`127.0.0.1`), preventing external network access.

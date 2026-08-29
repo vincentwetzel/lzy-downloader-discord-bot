@@ -2,9 +2,10 @@
 
 :: Run the supervisor in a detached child so this launcher returns immediately.
 if /i not "%~1"=="__supervise" (
-    :: Do not create a second supervisor when this launcher is started again.
-    powershell -NoProfile -Command "$found = Get-CimInstance Win32_Process -Filter \"name = 'cmd.exe'\" | Where-Object { $_.CommandLine -like '*start_lzy_downloader_discord_bridge.bat*' -and $_.CommandLine -like '*__supervise*' }; if ($found) { exit 1 } else { exit 0 }"
-    if not errorlevel 1 exit /b 0
+    :: Do not create a second supervisor for this launcher, and remove a
+    :: supervisor left behind by an older copy of this bot directory.
+    powershell -NoProfile -Command "$current = [IO.Path]::GetFullPath('%~f0'); $supervisors = Get-CimInstance Win32_Process -Filter \"name = 'cmd.exe'\" | Where-Object { $_.CommandLine -like '*start_lzy_downloader_discord_bridge.bat*' -and $_.CommandLine -like '*__supervise*' }; $same = $supervisors | Where-Object { $_.CommandLine -like ('*' + $current + '*') }; if ($same) { exit 1 }; $supervisors | Where-Object { $_.CommandLine -notlike ('*' + $current + '*') } | Invoke-CimMethod -MethodName Terminate | Out-Null; exit 0"
+    if errorlevel 1 exit /b 0
     powershell -NoProfile -Command "Start-Process -FilePath '%ComSpec%' -ArgumentList @('/d','/c','call','%~f0','__supervise') -WindowStyle Hidden"
     exit /b 0
 )

@@ -90,7 +90,7 @@ def log_uncaught_exception(exc_type: type[BaseException], exc_value: BaseExcepti
     logger.critical('Uncaught exception', exc_info=(exc_type, exc_value, exc_traceback))
 
 sys.excepthook = log_uncaught_exception
-logger.info('Bridge logging initialized. Log file: %s', LOG_PATH)
+logger.info('Bridge logging initialized.')
 
 class _LoggingOutput:
     """Route legacy print output through the rotating logger."""
@@ -134,6 +134,14 @@ TERMINAL_WEBHOOK_STATUSES = frozenset({
     "finished", "error",
 })
 
+# Local filesystem paths must never be echoed into Discord messages. Keep this
+# deliberately Windows-focused because the bridge is a Windows application;
+# URLs and ordinary relative filenames are intentionally left unchanged.
+WINDOWS_ABSOLUTE_PATH_REGEX = re.compile(
+    r'(?i)(?<![\w])(?:[A-Z]:\\|\\\\)'
+    r'(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*'
+)
+
 # These parameters are commonly added by share links, campaigns, or referral
 # layers and do not identify a different media resource. The identity helper
 # deliberately operates on URL structure only; it has no extractor/domain
@@ -174,6 +182,11 @@ def download_identity(url: str) -> str:
     kept_query.sort()
 
     return urlunparse((parsed.scheme.lower(), netloc, path, "", urlencode(kept_query), ""))
+
+
+def redact_absolute_paths(value: Any) -> str:
+    """Replace Windows absolute paths before text is sent to Discord."""
+    return WINDOWS_ABSOLUTE_PATH_REGEX.sub("[local path redacted]", str(value))
 
 # Global reference to prevent the socket from being garbage collected
 _lock_socket: Optional[socket.socket] = None
@@ -721,7 +734,9 @@ async def cancel(interaction: discord.Interaction, job_id: str) -> None:
     if success:
         await interaction.followup.send(f"🛑 Cancellation requested for `{job_id}`.", ephemeral=True)
     else:
-        safe_message = discord.utils.escape_markdown(message).replace("|", "\\|")
+        safe_message = discord.utils.escape_markdown(
+            redact_absolute_paths(message)
+        ).replace("|", "\\|")
         await interaction.followup.send(f"❌ {safe_message}", ephemeral=True)
 
 
@@ -782,7 +797,7 @@ async def clear_failed(interaction: discord.Interaction) -> None:
     else:
         message += "\nNo queued resumable jobs remain."
     if archive_path:
-        message += f"\nArchived the previous backup as `{archive_path}`."
+        message += "\nThe previous backup was archived."
 
     await interaction.response.send_message(message, ephemeral=True)
 
@@ -792,14 +807,13 @@ async def retry_failed(interaction: discord.Interaction) -> None:
         await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
         return
 
-    backup_file_path = get_download_backup_path()
     retry_count = len(deduplicate_retry_items([
         item for item in load_download_backup_items()
         if should_retry_backup_item(item)
     ]))
     if retry_count == 0:
         await interaction.response.send_message(
-            f"No failed or stopped recovery jobs were found in `{backup_file_path}`.",
+            "No failed or stopped recovery jobs were found in `downloads_backup.json`.",
             ephemeral=True
         )
         return
@@ -1076,7 +1090,7 @@ def check_api_health() -> None:
     if not lzy_executable_path or not os.path.exists(lzy_executable_path):
         raise RuntimeError(
             "**LzyDownloader Not Found.**\nExecutable not found at the "
-            f"configured path:\n`{lzy_executable_path}`\n\n"
+            "the configured executable path.\n\n"
             "Please ensure `LZY_EXECUTABLE_PATH` is set correctly in your `.env` file."
         )
 
@@ -1127,7 +1141,8 @@ def check_api_health() -> None:
             last_error = str(e)
 
     raise RuntimeError(
-        f"**LzyDownloader failed to launch or respond.**\nLast error: {last_error}"
+        "**LzyDownloader failed to launch or respond.**\n"
+        f"Last error: {redact_absolute_paths(last_error)}"
     )
 
 
@@ -1342,7 +1357,7 @@ async def run_download_job(
         except Exception as e:
             if job_key:
                 await unregister_active_job(job_key)
-            await edit_msg(f"❌ {e}")
+            await edit_msg(f"❌ {redact_absolute_paths(e)}")
             return
 
     api_key = await asyncio.to_thread(get_lzy_api_key)
@@ -1391,7 +1406,7 @@ async def run_download_job(
             if res.status_code != 200:
                 if job_key:
                     await unregister_active_job(job_key)
-                raw_err = res.text
+                raw_err = redact_absolute_paths(res.text)
                 if len(raw_err) > 500:
                     raw_err = raw_err[:497] + "..."
                 safe_text = discord.utils.escape_markdown(raw_err).replace("|", "\\|")
@@ -1420,7 +1435,10 @@ async def run_download_job(
         except requests.exceptions.RequestException as e:
             if job_key:
                 await unregister_active_job(job_key)
-            await edit_msg(f"❌ Failed to reach the LzyDownloader Local API.\n`{e}`")
+            await edit_msg(
+                "❌ Failed to reach the LzyDownloader Local API.\n"
+                f"`{redact_absolute_paths(e)}`"
+            )
             return
     else:
         if not job_id:
@@ -1444,7 +1462,7 @@ async def run_download_job(
                 if final_status in {"completed", "complete", "finished"}:
                     final_msg = f"✅ **Download Complete:** {title_str}"
                 else:
-                    error_text = current_data.get("error", "")
+                    error_text = redact_absolute_paths(current_data.get("error", ""))
                     if len(error_text) > 700:
                         error_text = error_text[:697] + "..."
                     if error_text:

@@ -13,6 +13,15 @@ changes documented in this repository.
   diagnostic logs.
 - Clarified that API token discovery checks both server-mode and GUI token
   locations, validating candidates against the local API.
+- Documented that resolved local paths are redacted from Discord-facing
+  diagnostics and replaced the executable-path example with a symbolic value.
+
+### Security
+
+- Redacted Windows absolute paths from API errors, worker launch failures,
+  webhook terminal diagnostics, and other Discord responses.
+- Removed resolved backup and executable paths from routine Discord status
+  messages.
 
 ### Added
 

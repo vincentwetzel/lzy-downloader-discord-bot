@@ -78,7 +78,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
    ```env
    DISCORD_BOT_TOKEN=your_discord_bot_token_here
    AUTHORIZED_USER_ID=your_user_id_here
-   LZY_EXECUTABLE_PATH=C:\Path\To\Your\LzyDownloader.exe
+   LZY_EXECUTABLE_PATH=<path-to-LzyDownloader.exe>
    ```
 4. To get your Discord user ID, enable Developer Mode in Discord (`Settings > Advanced > Developer Mode`), then right-click your profile and select **Copy User ID**.
 5. In the Discord Developer Portal, enable the **Message Content Intent** for the bot if you want direct-message URL downloads.
@@ -121,6 +121,10 @@ this operation.
 - Bridge-created recovery archives: `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json.*.bak` or, if `LOCALAPPDATA` is unavailable, `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json.*.bak`
 - Example environment template: `.env.example`
 - Bridge log: `bot.log` beside `lzy_downloader_discord_bridge.py`; rotated archives use names such as `bot_2026-08-12_231530.log` and five are retained. Logs can contain webhook URLs, titles, and errors; restrict access to them.
+
+The `%LOCALAPPDATA%` and `%USERPROFILE%` forms in the runtime-file list are
+environment-variable templates, not literal user paths. Resolved local paths
+are kept inside the machine and are redacted from Discord responses.
 
 ## Architecture
 Read [ARCHITECTURE.md](ARCHITECTURE.md) for technical context on the local API schema, auth flow, recovery behavior, and state management. Read [AGENTS.md](AGENTS.md) for the active background actors.
