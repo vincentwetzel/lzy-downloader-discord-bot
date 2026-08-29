@@ -25,6 +25,8 @@ GATEWAY_RECOVERY_TIMEOUT_SECONDS: int = 120
 # Load the Discord token from the .env file located in the script's directory
 script_dir = os.path.dirname(os.path.abspath(__file__))
 env_path = os.path.join(script_dir, '.env')
+# The Windows launcher checks this marker before restarting an exited bridge.
+STOP_MARKER_PATH = os.path.join(script_dir, 'lzy_downloader_discord_bridge.stop')
 
 # The normal launcher uses pythonw, so console output is unavailable in the
 # background. Keep bridge, library, and uncaught-exception diagnostics in a
@@ -176,6 +178,15 @@ def download_identity(url: str) -> str:
 # Global reference to prevent the socket from being garbage collected
 _lock_socket: Optional[socket.socket] = None
 _lzy_process: Optional[subprocess.Popen] = None
+
+def request_supervised_stop() -> None:
+    """Tell the detached Windows supervisor that the shutdown is intentional."""
+    try:
+        with open(STOP_MARKER_PATH, 'w', encoding='ascii') as marker:
+            marker.write('stop\n')
+        logger.info('Intentional shutdown marker written: %s', STOP_MARKER_PATH)
+    except OSError as exc:
+        logger.error('Unable to write shutdown marker %s: %s', STOP_MARKER_PATH, exc)
 
 def enforce_single_instance() -> None:
     """Binds a local UDP socket to prevent multiple instances of the bot."""
@@ -591,6 +602,7 @@ async def stop(interaction: discord.Interaction) -> None:
     if str(interaction.user.id) != AUTHORIZED_USER_ID:
         await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
         return
+    request_supervised_stop()
     await interaction.response.send_message("🛑 Shutting down the bot gracefully...")
     await client.close()
 

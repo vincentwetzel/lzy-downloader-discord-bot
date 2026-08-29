@@ -19,7 +19,7 @@ The project is split into two distinct components: the frontend Python Discord b
 - **Framework:** `discord.py`
 - **Entrypoint:** `lzy_downloader_discord_bridge.py`
 - **Windows launchers:** `start_lzy_downloader_discord_bridge.bat` and `stop_lzy_downloader_discord_bridge.bat`
-- **Windows supervision:** The start launcher hands the supervisor loop to a minimized detached command child, then returns immediately. The bridge exits after prolonged Discord Gateway loss so the supervisor can restart it after sleep/wake failures. The launcher prevents duplicate supervisor loops, and the stop launcher writes a marker to prevent an intentional shutdown from being restarted.
+- **Windows supervision:** The start launcher hands the supervisor loop to a minimized detached command child, then returns immediately. The bridge exits after prolonged Discord Gateway loss so the supervisor can restart it after sleep/wake failures. The launcher prevents duplicate supervisor loops, and both `/stop` and the stop launcher write a marker to prevent an intentional shutdown from being restarted.
 - **Responsibilities:**
   - Handles `/download`, `/audio`, `/downloads`, `/cancel`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop` slash commands.
   - Accepts authorized direct-message URLs as standard video downloads.

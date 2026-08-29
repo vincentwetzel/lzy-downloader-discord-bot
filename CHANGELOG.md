@@ -31,6 +31,8 @@ changes documented in this repository.
   a bounded recovery window, allowing the detached supervisor to restart the
   process after sleep/wake failures. The start launcher also avoids creating
   duplicate supervisor loops.
+- `/stop` now writes the supervisor shutdown marker before closing, preventing
+  the Windows launcher from immediately restarting the bot.
 - Cancellation now remains pending until a terminal `Cancelled`/`Canceled`
   webhook event is received.
 - Terminal webhook handling now recognizes cancellation states and preserves
