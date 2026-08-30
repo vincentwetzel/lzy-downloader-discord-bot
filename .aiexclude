@@ -1,0 +1,37 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Runtime logs and local state
+*.log
+*.log.*
+bot_*.log
+downloads_backup.json
+downloads_backup.json.*
+*.db
+*.sqlite
+*.sqlite3
+
+# Python caches and environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+
+# Temporary recovery and test fixtures
+/.tmp-*/
+/.test-*/
+/.test-results/
+/.test-runs/
+
+# Local tooling and agent state
+/.agents/
+/.codex/
+/.claude/
+/.cursor/

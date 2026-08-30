@@ -33,6 +33,11 @@ changes documented in this repository.
 
 ### Added
 
+- Added restart-safe Discord status tracking. Active jobs now persist their
+  Discord message references, and legacy progress messages can be recovered
+  from the most recent 100 DM messages without leaving old partial-progress
+  messages frozen. State writes are atomic, and missing or corrupt state does
+  not prevent startup.
 - Added `/downloads` to list up to 20 active bridge jobs with private job IDs,
   titles, and current statuses.
 - Added `/cancel <job_id>` with autocomplete for tracked active jobs.

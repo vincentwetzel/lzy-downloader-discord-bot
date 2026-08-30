@@ -67,6 +67,7 @@ under their own service or process supervisor.
 ## Recovery Flow
 - The bridge reads `<platform data root>/LzyDownloader/Server/downloads_backup.json` for server-mode backup entries.
 - Queued resumable entries can be resumed after startup by relaunching LzyDownloader and reattaching Discord progress tracking.
+- The bridge persists each active job's Discord channel/message IDs in `discord_message_state.json` using an atomic temporary-file replacement. Startup fetches those messages before creating any replacement; for pre-state jobs it scans at most the most recent 100 DM messages and matches the backed-up URL or a title unique within the recovery batch. If multiple legacy copies match, all copies are edited together so stale partial-progress messages do not remain frozen. A missing or invalid state file is ignored and rebuilt as jobs are registered.
 - Recovery tracking entries are registered before the first LzyDownloader launch because server startup immediately emits events for every restored queue item. `on_ready()` completes this setup before missed-DM catch-up can start another task.
 - Failed, stopped, or errored entries are treated as stranded jobs and are not assumed to auto-run safely.
 - Completed entries are pruned from the backup file during startup recovery so they do not linger as resumable work.
@@ -117,5 +118,6 @@ the bridge process.
 - `.env` in the bridge directory stores `DISCORD_BOT_TOKEN`, `AUTHORIZED_USER_ID`, and `LZY_EXECUTABLE_PATH`.
 - `<platform data root>/LzyDownloader/Server/api_token.txt` is the preferred local API bearer-token path; `<platform data root>/LzyDownloader/api_token.txt` is also checked for GUI-managed tokens. The platform data root follows the Windows, Linux, and macOS locations described above.
 - `<platform data root>/LzyDownloader/Server/downloads_backup.json` stores LzyDownloader server-mode recovery state.
+- `<platform data root>/LzyDownloader/Server/discord_message_state.json` stores bridge-owned active-job Discord message references in a versioned JSON document; writes use an atomic replacement and terminal jobs are removed from it.
 - `<platform data root>/LzyDownloader/Server/downloads_backup.json.*.bak` stores bridge-created backup archives.
 - `bot.log` beside `lzy_downloader_discord_bridge.py` stores active diagnostics, including incoming webhook payloads; rotated files use timestamped names such as `bot_2026-08-12_231530.log`. Restrict access because entries may contain requested URLs, titles, and backend errors.

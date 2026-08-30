@@ -122,6 +122,8 @@ AUTHORIZED_USER_ID: Optional[str] = os.getenv('AUTHORIZED_USER_ID')
 API_PORT: int = 8765
 BASE_URL: str = f"http://127.0.0.1:{API_PORT}"
 BACKUP_ARCHIVE_RETENTION: int = 2
+DISCORD_MESSAGE_HISTORY_LIMIT: int = 100
+DISCORD_MESSAGE_STATE_FILENAME: str = "discord_message_state.json"
 
 # Load from .env
 LZY_EXECUTABLE_PATH: Optional[str] = os.getenv('LZY_EXECUTABLE_PATH')
@@ -134,6 +136,14 @@ TERMINAL_WEBHOOK_STATUSES = frozenset({
     "completed", "complete", "failed", "stopped", "cancelled", "canceled",
     "finished", "error",
 })
+RECOVERY_MESSAGE_PREFIXES = (
+    "⏳ **Downloading:**",
+    "⏳ **Starting download:**",
+    "⏳ **Starting audio download:**",
+    "🔄 **Resuming progress tracking:**",
+    "🔄 **Retrying failed recovery job:**",
+    "⏳ **Missed offline request detected. Starting download:**",
+)
 
 # Local filesystem paths must never be echoed into Discord messages. Keep URL
 # paths intact while covering both native Windows and POSIX absolute paths.
@@ -459,6 +469,112 @@ class LzyBot(discord.Client):
             
         return web.Response(text="OK")
 
+    async def find_recovery_messages(
+        self,
+        dm_channel: discord.abc.Messageable,
+        items: List[Dict[str, Any]],
+    ) -> Dict[int, List[discord.Message]]:
+        """Fetches persisted status messages and migrates older messages from DM history."""
+        try:
+            history = [
+                message async for message in dm_channel.history(
+                    limit=DISCORD_MESSAGE_HISTORY_LIMIT
+                )
+            ]
+        except Exception as error:
+            logger.warning("Could not inspect Discord history for recovery: %s", error)
+            history = []
+
+        history_by_id = {
+            int(message.id): message
+            for message in history
+            if getattr(message, "id", None) is not None
+        }
+        state = load_discord_message_state()
+        bot_user_id = getattr(self.user, "id", None)
+        result: Dict[int, List[discord.Message]] = {}
+        used_message_ids: Set[int] = set()
+        channel_cache: Dict[int, discord.abc.Messageable] = {}
+        dm_channel_id = getattr(dm_channel, "id", None)
+        if dm_channel_id is not None:
+            channel_cache[int(dm_channel_id)] = dm_channel
+
+        # Title matching is only safe when the title belongs to one recovery
+        # item. Exact URLs and durable IDs remain safe even when titles repeat.
+        title_owners: Dict[str, int] = {}
+        for item in items:
+            for title in backup_item_title_candidates(item):
+                title_owners[title.casefold()] = title_owners.get(title.casefold(), 0) + 1
+
+        for index, item in enumerate(items):
+            url = str(item.get("url", ""))
+            job_id = str(
+                item.get("job_id") or item.get("id") or item.get("jobId")
+                or item.get("lzy_id") or ""
+            )
+            matches: List[discord.Message] = []
+
+            saved_entry = state.get(job_id, {})
+            saved_references = saved_entry.get("messages", [])
+            if isinstance(saved_references, list):
+                for reference in saved_references:
+                    if not isinstance(reference, dict):
+                        continue
+                    try:
+                        channel_id = int(reference.get("channel_id"))
+                        message_id = int(reference.get("message_id"))
+                    except (TypeError, ValueError):
+                        continue
+                    message = history_by_id.get(message_id)
+                    saved_channel = channel_cache.get(channel_id)
+                    if saved_channel is None:
+                        try:
+                            saved_channel = await self.fetch_channel(channel_id)
+                            channel_cache[channel_id] = saved_channel
+                        except Exception as error:
+                            logger.info(
+                                "Could not fetch saved Discord channel %s: %s",
+                                channel_id, error,
+                            )
+                            continue
+                    if message is None:
+                        try:
+                            message = await saved_channel.fetch_message(message_id)
+                        except Exception as error:
+                            logger.info(
+                                "Could not fetch saved Discord status message %s: %s",
+                                message_id, error,
+                            )
+                            continue
+                    if message.id not in used_message_ids:
+                        matches.append(message)
+                        used_message_ids.add(message.id)
+
+            for message in history:
+                message_id = getattr(message, "id", None)
+                if message_id in used_message_ids:
+                    continue
+                exact_url = bool(url and url in str(getattr(message, "content", "") or ""))
+                title_match = any(
+                    title_owners.get(title.casefold()) == 1
+                    for title in backup_item_title_candidates(item)
+                )
+                if recovery_message_matches(
+                    message, item, bot_user_id,
+                    allow_title=title_match,
+                ) and (exact_url or title_match):
+                    matches.append(message)
+                    used_message_ids.add(message_id)
+
+            if matches:
+                result[index] = matches
+                if job_id:
+                    remember_discord_messages(
+                        job_id, url, get_backup_item_download_type(item), matches
+                    )
+
+        return result
+
     async def on_ready(self) -> None:
         print(f"Discord connection ready as {self.user}.")
         # Arm recovery tracking before missed-DM tasks can launch the worker.
@@ -517,7 +633,12 @@ class LzyBot(discord.Client):
                     )
                     
                     edit_msg_cb, send_msg_cb = create_callbacks(sent_msg, msg.channel)
-                    self.loop.create_task(run_download_job(content, edit_msg_cb, send_msg_cb))
+                    self.loop.create_task(
+                        run_download_job(
+                            content, edit_msg_cb, send_msg_cb,
+                            status_messages=[sent_msg],
+                        )
+                    )
 
             except Exception as e:
                 print(f"Failed to process startup DM or missed messages: {e}")
@@ -589,7 +710,9 @@ class LzyBot(discord.Client):
             async def send_msg(new_content: str) -> None:
                 await message.channel.send(new_content)
                 
-            self.loop.create_task(run_download_job(content, edit_msg, send_msg))
+            self.loop.create_task(
+                run_download_job(content, edit_msg, send_msg, status_messages=[sent_msg])
+            )
 
 client = LzyBot()
 
@@ -691,7 +814,9 @@ async def download(interaction: discord.Interaction, url: str) -> None:
             else:
                 await interaction.channel.send(new_content)
             
-    client.loop.create_task(run_download_job(url, edit_msg, send_msg))
+    client.loop.create_task(
+        run_download_job(url, edit_msg, send_msg, status_messages=[sent_msg])
+    )
 
 
 async def cancel_job_autocomplete(
@@ -790,7 +915,12 @@ async def audio(interaction: discord.Interaction, url: str) -> None:
             else:
                 await interaction.channel.send(new_content)
             
-    client.loop.create_task(run_download_job(url, edit_msg, send_msg, download_type="audio"))
+    client.loop.create_task(
+        run_download_job(
+            url, edit_msg, send_msg, download_type="audio",
+            status_messages=[sent_msg],
+        )
+    )
 
 @client.tree.command(name="clear_failed", description="Clear failed recovery jobs from the backup file")
 async def clear_failed(interaction: discord.Interaction) -> None:
@@ -907,6 +1037,150 @@ def get_lzy_server_data_dir() -> str:
 def get_download_backup_path() -> str:
     """Returns the server-mode queue backup file used by LzyDownloader."""
     return os.path.join(get_lzy_server_data_dir(), 'downloads_backup.json')
+
+
+def get_discord_message_state_path() -> str:
+    """Returns the bridge-owned mapping of jobs to Discord status messages."""
+    return os.path.join(get_lzy_server_data_dir(), DISCORD_MESSAGE_STATE_FILENAME)
+
+
+def load_discord_message_state() -> Dict[str, Dict[str, Any]]:
+    """Loads durable Discord message references, tolerating an absent/corrupt file."""
+    state_path = get_discord_message_state_path()
+    try:
+        with open(state_path, 'r', encoding='utf-8') as state_file:
+            data = json.load(state_file)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    jobs = data.get("jobs") if isinstance(data, dict) else None
+    if not isinstance(jobs, dict):
+        return {}
+    return {
+        str(job_id): entry
+        for job_id, entry in jobs.items()
+        if isinstance(entry, dict)
+    }
+
+
+def save_discord_message_state(state: Dict[str, Dict[str, Any]]) -> None:
+    """Atomically saves bridge-owned Discord message references."""
+    state_path = get_discord_message_state_path()
+    state_dir = os.path.dirname(state_path)
+    temp_path = f"{state_path}.tmp"
+    try:
+        os.makedirs(state_dir, exist_ok=True)
+        with open(temp_path, 'w', encoding='utf-8') as state_file:
+            json.dump({"version": 1, "jobs": state}, state_file, indent=2)
+            state_file.write("\n")
+        os.replace(temp_path, state_path)
+    except (OSError, TypeError) as error:
+        logger.warning("Could not save Discord message state: %s", error)
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+
+
+def discord_message_reference(message: Any) -> Optional[Dict[str, int]]:
+    """Extracts the stable channel/message IDs needed to fetch a Discord message."""
+    channel_id = getattr(getattr(message, "channel", None), "id", None)
+    message_id = getattr(message, "id", None)
+    if channel_id is None or message_id is None:
+        return None
+    try:
+        return {"channel_id": int(channel_id), "message_id": int(message_id)}
+    except (TypeError, ValueError):
+        return None
+
+
+def remember_discord_messages(
+    job_id: str,
+    url: str,
+    download_type: str,
+    messages: List[Any],
+) -> None:
+    """Persists all status messages currently representing one download."""
+    references = []
+    seen_ids: Set[int] = set()
+    for message in messages:
+        reference = discord_message_reference(message)
+        if not reference or reference["message_id"] in seen_ids:
+            continue
+        seen_ids.add(reference["message_id"])
+        references.append(reference)
+    if not references:
+        return
+
+    state = load_discord_message_state()
+    state[str(job_id)] = {
+        "url": str(url),
+        "download_type": str(download_type),
+        "messages": references,
+    }
+    save_discord_message_state(state)
+
+
+def forget_discord_messages(job_id: str) -> None:
+    """Removes a terminal job's Discord references from durable bridge state."""
+    state = load_discord_message_state()
+    if str(job_id) not in state:
+        return
+    del state[str(job_id)]
+    save_discord_message_state(state)
+
+
+def prune_discord_message_state(job_ids: Set[str]) -> None:
+    """Drops references for jobs no longer present in backend recovery state."""
+    state = load_discord_message_state()
+    retained = {job_id: entry for job_id, entry in state.items() if job_id in job_ids}
+    if retained != state:
+        save_discord_message_state(retained)
+
+
+def backup_item_title_candidates(item: Dict[str, Any]) -> Set[str]:
+    """Returns title fields that can identify pre-persistence recovery messages."""
+    candidates: Set[str] = set()
+    for container in (item, item.get("options"), item.get("metadata")):
+        if not isinstance(container, dict):
+            continue
+        for key in ("title", "fulltitle", "initial_title"):
+            value = str(container.get(key) or "").strip()
+            if len(value) >= 4:
+                candidates.add(value)
+    return candidates
+
+
+def is_recovery_status_message(message: Any, bot_user_id: Optional[int]) -> bool:
+    """Identifies the bridge's editable progress messages in DM history."""
+    author_id = getattr(getattr(message, "author", None), "id", None)
+    content = str(getattr(message, "content", "") or "")
+    return (
+        bot_user_id is not None
+        and author_id == bot_user_id
+        and content.startswith(RECOVERY_MESSAGE_PREFIXES)
+    )
+
+
+def recovery_message_matches(
+    message: Any,
+    item: Dict[str, Any],
+    bot_user_id: Optional[int],
+    allow_title: bool = True,
+) -> bool:
+    """Matches a historical progress message to a backed-up download."""
+    if not is_recovery_status_message(message, bot_user_id):
+        return False
+
+    content = str(getattr(message, "content", "") or "")
+    url = str(item.get("url", "")).strip()
+    if url and url in content:
+        return True
+    if not allow_title:
+        return False
+
+    content_lower = content.casefold()
+    return any(title.casefold() in content_lower for title in backup_item_title_candidates(item))
 
 
 def prune_backup_archives() -> None:
@@ -1198,12 +1472,19 @@ def build_active_job_data(url: str) -> Dict[str, Any]:
     }
 
 
-async def register_active_job(job_key: str, url: str) -> bool:
+async def register_active_job(
+    job_key: str,
+    url: str,
+    download_type: str = "video",
+    status_messages: Optional[List[discord.Message]] = None,
+) -> bool:
     """Registers a job before launch so restored webhook events cannot be lost."""
     if job_key in client.active_jobs:
         return False
 
     client.active_jobs[job_key] = build_active_job_data(url)
+    if status_messages:
+        remember_discord_messages(job_key, url, download_type, status_messages)
     async with client.jobs_lock:
         client.active_job_count += 1
     return True
@@ -1213,6 +1494,7 @@ async def unregister_active_job(job_key: str) -> None:
     """Removes a tracked job and keeps the active-job count consistent."""
     if job_key in client.active_jobs:
         del client.active_jobs[job_key]
+    forget_discord_messages(job_key)
 
     async with client.jobs_lock:
         client.active_job_count = max(0, client.active_job_count - 1)
@@ -1230,6 +1512,12 @@ async def resume_backed_up_downloads_on_startup(
             client.startup_resume_started = True
 
         items = await asyncio.to_thread(load_download_backup_items)
+        backup_job_ids = {
+            str(item.get("job_id") or item.get("id") or item.get("jobId")
+                or item.get("lzy_id") or "")
+            for item in items
+        }
+        await asyncio.to_thread(prune_discord_message_state, backup_job_ids)
         if not items:
             return
 
@@ -1288,16 +1576,31 @@ async def resume_backed_up_downloads_on_startup(
             print(f"Could not create DM channel for recovery tracking: {e}")
             return
 
-        # Closure-safe callback factory
-        def make_cbs(m: discord.Message, c: discord.abc.Messageable):
+        recovered_messages = {}
+        if skip_enqueue:
+            recovered_messages = await client.find_recovery_messages(dm_channel, target_items)
+
+        # Closure-safe callback factory. A legacy restart can leave several
+        # copies of one progress message in history; edit all matched copies
+        # so none remain frozen at an old percentage.
+        def make_cbs(messages: List[discord.Message], c: discord.abc.Messageable):
             async def edit_cb(new_content: str) -> None:
-                await m.edit(content=new_content)
+                results = await asyncio.gather(
+                    *(message.edit(content=new_content) for message in messages),
+                    return_exceptions=True,
+                )
+                for message, result in zip(messages, results):
+                    if isinstance(result, Exception):
+                        logger.warning(
+                            "Failed to edit recovery message %s: %s",
+                            getattr(message, "id", "unknown"), result,
+                        )
             async def send_cb(new_content: str) -> None:
                 await c.send(new_content)
             return edit_cb, send_cb
 
         pending_tasks = []
-        for item in target_items:
+        for item_index, item in enumerate(target_items):
             url = str(item.get("url", ""))
             if not url or not is_valid_url(url):
                 continue
@@ -1306,17 +1609,31 @@ async def resume_backed_up_downloads_on_startup(
             job_id = str(item.get("job_id") or item.get("id") or item.get("jobId") or item.get("lzy_id") or "")
 
             try:
-                sent_msg = await dm_channel.send(
-                    f"{prefix} <{url}>\n*Connecting to LzyDownloader...*"
-                )
-                edit_msg_cb, send_msg_cb = make_cbs(sent_msg, dm_channel)
+                status_messages = recovered_messages.get(item_index, [])
+                if not status_messages:
+                    sent_msg = await dm_channel.send(
+                        f"{prefix} <{url}>\n*Connecting to LzyDownloader...*"
+                    )
+                    status_messages = [sent_msg]
+                else:
+                    logger.info(
+                        "Reconnected recovery job %s to %d existing Discord message(s).",
+                        job_id or "unknown", len(status_messages),
+                    )
+                message_channel = (
+                    getattr(status_messages[0], "channel", None)
+                    if status_messages else None
+                ) or dm_channel
+                edit_msg_cb, send_msg_cb = make_cbs(status_messages, message_channel)
 
                 job_registered = False
                 if skip_enqueue:
                     if not job_id:
                         await edit_msg_cb("? Missing job_id for resumed download.")
                         continue
-                    job_registered = await register_active_job(job_id, url)
+                    job_registered = await register_active_job(
+                        job_id, url, download_type, status_messages
+                    )
                     if not job_registered:
                         print(f"Recovery job {job_id} is already tracked; skipping duplicate.")
                         continue
@@ -1330,6 +1647,7 @@ async def resume_backed_up_downloads_on_startup(
                         skip_enqueue,
                         job_id,
                         job_registered,
+                        status_messages,
                     )
                 )
             except Exception as e:
@@ -1346,6 +1664,7 @@ async def resume_backed_up_downloads_on_startup(
             task_skip_enqueue,
             task_job_id,
             task_job_registered,
+            task_status_messages,
         ) in pending_tasks:
             client.loop.create_task(
                 run_download_job(
@@ -1356,6 +1675,7 @@ async def resume_backed_up_downloads_on_startup(
                     skip_enqueue=task_skip_enqueue,
                     job_id=task_job_id,
                     job_registered=task_job_registered,
+                    status_messages=task_status_messages,
                 )
             )
 
@@ -1367,7 +1687,8 @@ async def run_download_job(
     download_type: str = "video",
     skip_enqueue: bool = False,
     job_id: Optional[str] = None,
-    job_registered: bool = False
+    job_registered: bool = False,
+    status_messages: Optional[List[discord.Message]] = None,
 ) -> None:
     """Enqueues a single download via the local API and polls until it finishes."""
     # Register before enqueueing. The C++ validator can reject a URL before the
@@ -1381,7 +1702,9 @@ async def run_download_job(
         return
 
     if not job_registered and job_key:
-        await register_active_job(job_key, url)
+        await register_active_job(
+            job_key, url, download_type, status_messages
+        )
         job_registered = True
     async with client.launch_lock:
         try:
@@ -1464,7 +1787,9 @@ async def run_download_job(
                 if job_key:
                     await unregister_active_job(job_key)
                 job_key = response_job_key
-                await register_active_job(job_key, url)
+                await register_active_job(
+                    job_key, url, download_type, status_messages
+                )
             
         except requests.exceptions.RequestException as e:
             if job_key:
