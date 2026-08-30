@@ -12,7 +12,7 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
   - Scans recent authorized direct messages on startup and queues unacknowledged offline URL requests oldest-first, while skipping URLs already present in the recovery backup queue to avoid duplicate re-queueing.
   - Sends online and offline notification DMs to the authorized user when connecting or gracefully shutting down.
   - Checks the health of the local C++ API, launches the Download Worker if it is not running, and ensures it is properly terminated when the bridge shuts down.
-  - Reads and validates the local bearer token from the server token path (`%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`, with the `%USERPROFILE%\AppData\Local` fallback) and then the GUI token path (`%LOCALAPPDATA%\LzyDownloader\api_token.txt`, with the same fallback).
+  - Reads and validates the local bearer token from the server token path, then the GUI token path, under the platform data root: `%LOCALAPPDATA%` on Windows, XDG data or `~/.local/share` on Linux, and `~/Library/Application Support` on macOS.
   - Hosts an asynchronous webhook listener (`aiohttp`) to receive push updates from the C++ app.
   - Formats webhook JSON payloads into compact Unicode progress bars, displays real-time queue positions, and updates Discord messages with a debounce mechanism.
   - Uses the C++ `overall_progress` webhook field for multi-stream jobs so Discord percentages remain monotonic across video/audio stream handoff.
@@ -22,8 +22,8 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
   - Generates and registers a UUID before each new enqueue request, passing it as both `job_id` and `id` so asynchronous backend validation failures remain associated with the originating Discord message.
   - Pre-registers caller-supplied job IDs before enqueueing so asynchronous validation failures can be matched, reported, and removed immediately.
   - Pre-registers all queued recovery jobs before launching the C++ worker so startup webhook events cannot arrive before bridge tracking exists.
-  - Sanitizes dynamic webhook text (like titles and status updates) to prevent accidental Discord markdown rendering, and redacts Windows absolute paths before diagnostic text is sent to Discord.
-  - Reads `downloads_backup.json` from `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` or the `%USERPROFILE%\AppData\Local` fallback path to resume startup work, prune completed backup entries, and retry or clear inactive recovery jobs.
+  - Sanitizes dynamic webhook text (like titles and status updates) to prevent accidental Discord markdown rendering, and redacts Windows, POSIX, and local file-URI paths before diagnostic text is sent to Discord.
+  - Reads `downloads_backup.json` from the platform data root under `LzyDownloader/Server` to resume startup work, prune completed backup entries, and retry or clear inactive recovery jobs.
   - Uses extractor-independent URL identity normalization to avoid re-queueing equivalent recovery entries or offline DM requests that differ only by tracking/share parameters.
   - Includes backend `error` diagnostics in terminal Discord messages when supplied by a webhook.
   - Archives previous backup files before recovery cleanup so recovery state is not discarded silently.
@@ -42,9 +42,17 @@ The headless instance of the LzyDownloader Qt6 application.
   - Exposes these metrics over the local HTTP server (`127.0.0.1:8765`).
   - Pushes live state changes to the Interaction Agent via an HTTP `POST` webhook (`127.0.0.1:8766/webhook`).
   - Includes `parent_id` and `url` alongside the `job_id` in its webhook payloads, allowing the bridge to map expanded child jobs back to the original Discord requests.
-  - Persists server-mode queue recovery data in `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json`, using `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json` as the fallback location if needed.
+  - Persists server-mode queue recovery data under the platform data root in `LzyDownloader/Server/downloads_backup.json`, matching the bridge's Windows, Linux, and macOS token/backup locations.
 
 ## 3. Development Requirements
+
+Windows, Linux, and macOS are first-class supported platforms for the bridge.
+Every path, process, launcher, and documentation change must preserve all
+three platforms; Windows-only behavior must have an explicit platform guard
+and an equivalent POSIX implementation or documented prerequisite.
+The Python entrypoint is the portable runtime boundary; the checked-in batch
+launchers and PowerShell supervisor are Windows-only conveniences, so POSIX
+deployments must run the entrypoint under an equivalent supervisor.
 
 All code modifying or interacting with these agents must strictly adhere to the guidelines established in CODING_STANDARDS.md.
 

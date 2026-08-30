@@ -15,13 +15,21 @@ changes documented in this repository.
   locations, validating candidates against the local API.
 - Documented that resolved local paths are redacted from Discord-facing
   diagnostics and replaced the executable-path example with a symbolic value.
+- Documented Windows-only launcher/supervisor conveniences separately from the
+  portable Python entrypoint and platform data-root support.
 
 ### Security
 
-- Redacted Windows absolute paths from API errors, worker launch failures,
-  webhook terminal diagnostics, and other Discord responses.
+- Redacted Windows, POSIX, and local file-URI paths from API errors, worker
+  launch failures, webhook terminal diagnostics, and other Discord responses.
 - Removed resolved backup and executable paths from routine Discord status
   messages.
+
+### Fixed
+
+- Made bridge token, backup, and recovery-archive discovery follow the C++
+  application's Windows, Linux, and macOS data directories instead of treating
+  the Windows `%USERPROFILE%` template as a literal POSIX path.
 
 ### Added
 

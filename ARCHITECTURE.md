@@ -3,6 +3,11 @@
 ## System Overview
 The project is split into two distinct components: the frontend Python Discord bot and the backend C++ Qt6 desktop application. They communicate securely through a local REST API.
 
+The bridge's Python runtime and platform data-path handling support Windows,
+Linux, and macOS. The checked-in `.bat` launchers and detached PowerShell
+supervisor are Windows conveniences; POSIX deployments run the Python entrypoint
+under their own service or process supervisor.
+
 ### 1. Local API Server (C++ Backend)
 - **Endpoint:** `127.0.0.1:8765`
 - **Framework:** C++ Qt6
@@ -30,12 +35,12 @@ The project is split into two distinct components: the frontend Python Discord b
   - **Strictly Event-Driven:** Polling the local API (e.g., `GET /status`) for live progress updates is explicitly forbidden. All state tracking must rely solely on the push updates provided by the webhook server.
   - Tracks active download jobs so the user receives completion and queue-empty notifications.
   - Prevents duplicate bot processes by binding a local single-instance lock socket.
-  - Sanitizes dynamic data (video titles, API errors, status texts) from the C++ API to prevent unintended Discord markdown or spoiler formatting, and redacts Windows absolute paths before diagnostics are sent to Discord.
+  - Sanitizes dynamic data (video titles, API errors, status texts) from the C++ API to prevent unintended Discord markdown or spoiler formatting, and redacts Windows, POSIX, and local file-URI paths before diagnostics are sent to Discord.
   - Writes bridge output, Discord/aiohttp library diagnostics, incoming webhook payloads, and uncaught exception tracebacks to `bot.log` beside the entrypoint. The active file rotates at 10 MB into timestamped archives, retaining five. Because webhook payloads can contain URLs, titles, backend errors, and local diagnostic details, the log file must be treated as local-sensitive data.
 
 ## Security & Authentication
 - **Local Bind Only:** The C++ API server only listens on localhost (`127.0.0.1`), preventing external network access.
-- **Bearer Token Auth:** The C++ application generates a random API key and writes it to an AppData token file. The Python bot checks the server token path (`%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt`) first, then the GUI token path (`%LOCALAPPDATA%\LzyDownloader\api_token.txt`), validates candidates against the local API, and includes the working token in the `Authorization: Bearer <token>` header. If `LOCALAPPDATA` is missing, both paths use the `%USERPROFILE%\AppData\Local` fallback.
+- **Bearer Token Auth:** The C++ application generates a random API key and writes it to its app-local data directory. The Python bot checks the server token path first, then the GUI token path, validates candidates against the local API, and includes the working token in the `Authorization: Bearer <token>` header. The platform data root is `%LOCALAPPDATA%` on Windows, `$XDG_DATA_HOME` or `~/.local/share` on Linux, and `~/Library/Application Support` on macOS.
 - **User Authorization:** The bridge requires `AUTHORIZED_USER_ID` and rejects commands or DMs from any other Discord user.
 - **Local Single Instance:** The bridge binds a local UDP socket on `127.0.0.1:48765` to prevent multiple bot processes from issuing competing requests.
 - **Environment Template:** `.env.example` documents the required bridge variables (`DISCORD_BOT_TOKEN`, `AUTHORIZED_USER_ID`, and `LZY_EXECUTABLE_PATH`) for local setup.
@@ -60,7 +65,7 @@ The project is split into two distinct components: the frontend Python Discord b
 - This duplicate-prevention step keeps startup catch-up from re-queuing downloads that are already scheduled for recovery from `downloads_backup.json`.
 
 ## Recovery Flow
-- The bridge reads `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` for server-mode backup entries.
+- The bridge reads `<platform data root>/LzyDownloader/Server/downloads_backup.json` for server-mode backup entries.
 - Queued resumable entries can be resumed after startup by relaunching LzyDownloader and reattaching Discord progress tracking.
 - Recovery tracking entries are registered before the first LzyDownloader launch because server startup immediately emits events for every restored queue item. `on_ready()` completes this setup before missed-DM catch-up can start another task.
 - Failed, stopped, or errored entries are treated as stranded jobs and are not assumed to auto-run safely.
@@ -110,7 +115,7 @@ the bridge process.
 
 ## Runtime Files
 - `.env` in the bridge directory stores `DISCORD_BOT_TOKEN`, `AUTHORIZED_USER_ID`, and `LZY_EXECUTABLE_PATH`.
-- `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt` is the preferred local API bearer-token path; `%LOCALAPPDATA%\LzyDownloader\api_token.txt` is also checked for GUI-managed tokens. When `LOCALAPPDATA` is unavailable, the corresponding fallback paths are under `%USERPROFILE%\AppData\Local\LzyDownloader`.
-- `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` stores LzyDownloader server-mode recovery state, with `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json` as the fallback path when `LOCALAPPDATA` is unavailable.
-- `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json.*.bak` stores bridge-created backup archives, with `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json.*.bak` as the fallback path when `LOCALAPPDATA` is unavailable.
+- `<platform data root>/LzyDownloader/Server/api_token.txt` is the preferred local API bearer-token path; `<platform data root>/LzyDownloader/api_token.txt` is also checked for GUI-managed tokens. The platform data root follows the Windows, Linux, and macOS locations described above.
+- `<platform data root>/LzyDownloader/Server/downloads_backup.json` stores LzyDownloader server-mode recovery state.
+- `<platform data root>/LzyDownloader/Server/downloads_backup.json.*.bak` stores bridge-created backup archives.
 - `bot.log` beside `lzy_downloader_discord_bridge.py` stores active diagnostics, including incoming webhook payloads; rotated files use timestamped names such as `bot_2026-08-12_231530.log`. Restrict access because entries may contain requested URLs, titles, and backend errors.

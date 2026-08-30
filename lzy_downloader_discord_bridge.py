@@ -11,6 +11,7 @@ import logging
 import math
 import uuid
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 import requests
 import discord
 from discord import app_commands
@@ -134,12 +135,23 @@ TERMINAL_WEBHOOK_STATUSES = frozenset({
     "finished", "error",
 })
 
-# Local filesystem paths must never be echoed into Discord messages. Keep this
-# deliberately Windows-focused because the bridge is a Windows application;
-# URLs and ordinary relative filenames are intentionally left unchanged.
+# Local filesystem paths must never be echoed into Discord messages. Keep URL
+# paths intact while covering both native Windows and POSIX absolute paths.
 WINDOWS_ABSOLUTE_PATH_REGEX = re.compile(
-    r'(?i)(?<![\w])(?:[A-Z]:\\|\\\\)'
-    r'(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*'
+    r'(?i)(?<![\w])(?:[A-Z]:[\\/]|\\\\)'
+    r'(?:[^\\/:*?"<>|\r\n]+[\\/])*[^\\/:*?"<>|\r\n]*'
+)
+QUOTED_POSIX_ABSOLUTE_PATH_REGEX = re.compile(
+    r'''(?P<quote>["'])/(?!/)[^"'<>|\r\n]+(?P=quote)'''
+)
+DOUBLE_SLASH_POSIX_ABSOLUTE_PATH_REGEX = re.compile(
+    r'''(?<![\w:])//(?!/)[^\r\n"'<>|,;!?()[\]{}]+'''
+)
+POSIX_ABSOLUTE_PATH_REGEX = re.compile(
+    r'''(?<![\w/:])/(?!/)[^\r\n"'<>|,;!?()[\]{}]+'''
+)
+FILE_URI_PATH_REGEX = re.compile(
+    r'''(?i)\bfile://(?:localhost)?/(?!/)[^\r\n"'<>|,;!?()[\]{}]+'''
 )
 
 # These parameters are commonly added by share links, campaigns, or referral
@@ -185,8 +197,14 @@ def download_identity(url: str) -> str:
 
 
 def redact_absolute_paths(value: Any) -> str:
-    """Replace Windows absolute paths before text is sent to Discord."""
-    return WINDOWS_ABSOLUTE_PATH_REGEX.sub("[local path redacted]", str(value))
+    """Replace local absolute paths before text is sent to Discord."""
+    redacted = str(value)
+    redacted = FILE_URI_PATH_REGEX.sub("file://[local path redacted]", redacted)
+    redacted = WINDOWS_ABSOLUTE_PATH_REGEX.sub("[local path redacted]", redacted)
+    redacted = QUOTED_POSIX_ABSOLUTE_PATH_REGEX.sub("[local path redacted]", redacted)
+    redacted = DOUBLE_SLASH_POSIX_ABSOLUTE_PATH_REGEX.sub("[local path redacted]", redacted)
+    redacted = POSIX_ABSOLUTE_PATH_REGEX.sub("[local path redacted]", redacted)
+    return redacted
 
 # Global reference to prevent the socket from being garbage collected
 _lock_socket: Optional[socket.socket] = None
@@ -828,7 +846,7 @@ async def retry_failed(interaction: discord.Interaction) -> None:
     )
 
 def get_lzy_api_key() -> Optional[str]:
-    """Reads the auto-generated API key from LzyDownloader's AppData folder.
+    """Reads the auto-generated API key from LzyDownloader's app-local data folder.
     Checks both Server and GUI token files and returns the one that successfully authorizes."""
     server_dir = get_lzy_server_data_dir()
     gui_dir = os.path.dirname(server_dir)
@@ -863,11 +881,27 @@ def get_lzy_api_key() -> Optional[str]:
 
 def get_lzy_server_data_dir() -> str:
     """Returns the LzyDownloader data directory used by --server launches."""
-    app_data = os.getenv('LOCALAPPDATA')
-    if not app_data:
-        # Fallback to standard Windows path expansion if environment variable is missing
-        app_data = os.path.expandvars(r'%USERPROFILE%\AppData\Local')
-    return os.path.join(app_data, 'LzyDownloader', 'Server')
+    if os.name == 'nt':
+        app_data = os.getenv('LOCALAPPDATA')
+        if app_data:
+            data_root = Path(app_data)
+        else:
+            user_profile = os.getenv('USERPROFILE')
+            data_root = (Path(user_profile) / 'AppData' / 'Local'
+                         if user_profile else Path.home() / 'AppData' / 'Local')
+    elif sys.platform == 'darwin':
+        # Matches QStandardPaths::AppLocalDataLocation on macOS.
+        data_root = Path.home() / 'Library' / 'Application Support'
+    else:
+        # QStandardPaths follows XDG_DATA_HOME on Linux. The XDG spec only
+        # accepts an absolute value; ignore malformed relative overrides.
+        xdg_data_home = os.getenv('XDG_DATA_HOME')
+        if xdg_data_home and Path(xdg_data_home).is_absolute():
+            data_root = Path(xdg_data_home)
+        else:
+            data_root = Path.home() / '.local' / 'share'
+
+    return str(data_root / 'LzyDownloader' / 'Server')
 
 
 def get_download_backup_path() -> str:
@@ -1120,7 +1154,7 @@ def check_api_health() -> None:
         if _lzy_process.poll() is not None:
             raise RuntimeError(
                 f"**LzyDownloader crashed or closed immediately.** Exit code: {_lzy_process.returncode}.\n"
-                "Try running the .exe manually in a command prompt to check for missing DLLs."
+                "Try running the desktop executable manually to check for missing runtime dependencies."
             )
 
         try:

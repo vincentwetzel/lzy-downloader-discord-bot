@@ -1,32 +1,13 @@
 @echo off
+set "SCRIPT_DIR=%~dp0"
+cd /d "%SCRIPT_DIR%"
 
-:: Run the supervisor in a detached child so this launcher returns immediately.
-if /i not "%~1"=="__supervise" (
-    :: Do not create a second supervisor for this launcher, and remove a
-    :: supervisor left behind by an older copy of this bot directory.
-    powershell -NoProfile -Command "$current = [IO.Path]::GetFullPath('%~f0'); $supervisors = Get-CimInstance Win32_Process -Filter \"name = 'cmd.exe'\" | Where-Object { $_.CommandLine -like '*start_lzy_downloader_discord_bridge.bat*' -and $_.CommandLine -like '*__supervise*' }; $same = $supervisors | Where-Object { $_.CommandLine -like ('*' + $current + '*') }; if ($same) { exit 1 }; $supervisors | Where-Object { $_.CommandLine -notlike ('*' + $current + '*') } | Invoke-CimMethod -MethodName Terminate | Out-Null; exit 0"
-    if errorlevel 1 exit /b 0
-    powershell -NoProfile -Command "Start-Process -FilePath '%ComSpec%' -ArgumentList @('/d','/c','call','%~f0','__supervise') -WindowStyle Hidden"
-    exit /b 0
-)
+:: Stop older supervisors and the current bridge before starting one supervisor.
+powershell -NoProfile -Command "try { $supervisors = @(Get-CimInstance Win32_Process -Filter \"name = 'cmd.exe'\" -ErrorAction Stop | Where-Object { $_.CommandLine -like '*start_lzy_downloader_discord_bridge.bat*' -and $_.CommandLine -like '*__supervise*' }); $supervisors | Invoke-CimMethod -MethodName Terminate -ErrorAction Stop | Out-Null } catch {}" >nul 2>&1
+>"%SCRIPT_DIR%lzy_downloader_discord_bridge.stop" echo restart
+powershell -NoProfile -Command "$line = netstat -ano -p udp | Select-String '127.0.0.1:48765'; if ($line) { $owner = [regex]::Match($line.ToString(), '\s(\d+)\s*$').Groups[1].Value; if ($owner) { Stop-Process -Id ([int]$owner) -Force -ErrorAction SilentlyContinue } }" >nul 2>&1
+powershell -NoProfile -Command "Start-Sleep -Seconds 11" >nul 2>&1
+if exist "%SCRIPT_DIR%lzy_downloader_discord_bridge.stop" del /q "%SCRIPT_DIR%lzy_downloader_discord_bridge.stop" >nul 2>&1
 
-echo Stopping existing LzyDownloader Discord Bridge instances...
-
-:: Safely target only Python processes executing this bridge
-powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"name like 'python%%.exe' and CommandLine like '%%lzy_downloader_discord_bridge.py%%'\" | Invoke-CimMethod -MethodName Terminate" >nul 2>&1
-
-:: Also kill any lingering headless LzyDownloader server processes
-powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"name = 'LzyDownloader.exe' and CommandLine like '%%--server%%'\" | Invoke-CimMethod -MethodName Terminate" >nul 2>&1
-
-echo Starting new instance...
-set "STOP_MARKER=%~dp0lzy_downloader_discord_bridge.stop"
-if exist "%STOP_MARKER%" del /q "%STOP_MARKER%" >nul 2>&1
-
-:: Keep the supervisor alive so a sleep/wake-related process or gateway failure is recovered.
-:supervise
-if exist "%STOP_MARKER%" exit /b 0
-pythonw "%~dp0lzy_downloader_discord_bridge.py"
-if exist "%STOP_MARKER%" exit /b 0
-echo Bridge exited unexpectedly. Restarting in 10 seconds...
-timeout /t 10 /nobreak >nul
-goto supervise
+powershell -NoProfile -Command "$supervisor = Join-Path '%SCRIPT_DIR%' 'supervise_lzy_downloader_discord_bridge.ps1'; Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$supervisor) -WorkingDirectory '%SCRIPT_DIR%' -WindowStyle Hidden" >nul 2>&1
+exit /b 0

@@ -4,6 +4,11 @@ Current release: `v1.2.9`
 
 A lightweight Python Discord bot that acts as a remote control for **[LzyDownloader](https://github.com/vincentwetzel/lzy-downloader)**, a local C++ Qt6 desktop application.
 
+The bridge runs from the Python entrypoint on Windows, Linux, and macOS. The
+included `.bat` launchers and detached PowerShell supervisor are Windows-only;
+on Linux or macOS, run the Python entrypoint directly or provide an equivalent
+process supervisor.
+
 ## Overview
 Instead of baking heavy Discord SDKs directly into the C++ desktop app, LzyDownloader exposes a secure local API (`127.0.0.1:8765`). This Python bot listens for Discord slash commands and authorized DMs, communicates with the local C++ API, and provides real-time progress updates directly in Discord.
 
@@ -78,7 +83,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
    ```env
    DISCORD_BOT_TOKEN=your_discord_bot_token_here
    AUTHORIZED_USER_ID=your_user_id_here
-   LZY_EXECUTABLE_PATH=<path-to-LzyDownloader.exe>
+   LZY_EXECUTABLE_PATH=<path-to-LzyDownloader-executable>
    ```
 4. To get your Discord user ID, enable Developer Mode in Discord (`Settings > Advanced > Developer Mode`), then right-click your profile and select **Copy User ID**.
 5. In the Discord Developer Portal, enable the **Message Content Intent** for the bot if you want direct-message URL downloads.
@@ -94,6 +99,9 @@ On Windows, you can also use the helper scripts:
 start_lzy_downloader_discord_bridge.bat
 stop_lzy_downloader_discord_bridge.bat
 ```
+
+On Linux and macOS, run `python lzy_downloader_discord_bridge.py` directly and
+manage it with the host operating system's service or process supervisor.
 
 Once the bot is online, open Discord and run:
 ```text
@@ -116,15 +124,15 @@ active tracking table; it never starts a replacement downloader process for
 this operation.
 
 ## Runtime Files
-- API token: the bridge checks `%LOCALAPPDATA%\LzyDownloader\Server\api_token.txt` first, then `%LOCALAPPDATA%\LzyDownloader\api_token.txt`; if `LOCALAPPDATA` is unavailable, it checks the corresponding paths under `%USERPROFILE%\AppData\Local\LzyDownloader`
-- Server-mode backup queue: `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json` or, if `LOCALAPPDATA` is unavailable, `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json`
-- Bridge-created recovery archives: `%LOCALAPPDATA%\LzyDownloader\Server\downloads_backup.json.*.bak` or, if `LOCALAPPDATA` is unavailable, `%USERPROFILE%\AppData\Local\LzyDownloader\Server\downloads_backup.json.*.bak`
+- API token: the bridge checks the server path before the GUI path under the platform data root: `%LOCALAPPDATA%\LzyDownloader` on Windows, `$XDG_DATA_HOME/LzyDownloader` (or `~/.local/share/LzyDownloader`) on Linux, and `~/Library/Application Support/LzyDownloader` on macOS
+- Server-mode backup queue: `<platform data root>/LzyDownloader/Server/downloads_backup.json`
+- Bridge-created recovery archives: `<platform data root>/LzyDownloader/Server/downloads_backup.json.*.bak`
 - Example environment template: `.env.example`
 - Bridge log: `bot.log` beside `lzy_downloader_discord_bridge.py`; rotated archives use names such as `bot_2026-08-12_231530.log` and five are retained. Logs can contain webhook URLs, titles, and errors; restrict access to them.
 
-The `%LOCALAPPDATA%` and `%USERPROFILE%` forms in the runtime-file list are
-environment-variable templates, not literal user paths. Resolved local paths
-are kept inside the machine and are redacted from Discord responses.
+The platform data root follows the same locations as the C++ application.
+Resolved local paths are kept inside the machine and are redacted from
+Discord responses.
 
 ## Architecture
 Read [ARCHITECTURE.md](ARCHITECTURE.md) for technical context on the local API schema, auth flow, recovery behavior, and state management. Read [AGENTS.md](AGENTS.md) for the active background actors.
