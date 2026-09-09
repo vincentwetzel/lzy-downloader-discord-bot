@@ -243,15 +243,11 @@ def enforce_single_instance() -> None:
         sys.exit(1)
 
 def cleanup_subprocess() -> None:
-    """Ensures the headless LzyDownloader process is terminated when the bot exits."""
+    """Release the launch handle without stopping the shared coordinator."""
     global _lzy_process
     if _lzy_process and _lzy_process.poll() is None:
-        print("🛑 Terminating headless LzyDownloader process...")
-        try:
-            _lzy_process.terminate()
-            _lzy_process.wait(timeout=3)
-        except Exception:
-            pass
+        print("Leaving the shared LzyDownloader coordinator running.")
+    _lzy_process = None
 
 atexit.register(cleanup_subprocess)
 
@@ -976,13 +972,16 @@ async def retry_failed(interaction: discord.Interaction) -> None:
     )
 
 def get_lzy_api_key() -> Optional[str]:
-    """Reads the auto-generated API key from LzyDownloader's app-local data folder.
-    Checks both Server and GUI token files and returns the one that successfully authorizes."""
-    server_dir = get_lzy_server_data_dir()
-    gui_dir = os.path.dirname(server_dir)
+    """Reads and validates the coordinator-wide Local API token.
+
+    The legacy Server path remains a read-only fallback for a running older
+    desktop build during upgrade, but all current launches use the root path.
+    """
+    coordinator_dir = get_lzy_data_dir()
+    legacy_server_dir = get_lzy_server_data_dir()
     
     keys_to_try = []
-    for d in [server_dir, gui_dir]:
+    for d in [coordinator_dir, legacy_server_dir]:
         key_path = os.path.join(d, 'api_token.txt')
         if os.path.exists(key_path):
             try:
@@ -1009,8 +1008,8 @@ def get_lzy_api_key() -> Optional[str]:
     return keys_to_try[0]
 
 
-def get_lzy_server_data_dir() -> str:
-    """Returns the LzyDownloader data directory used by --server launches."""
+def get_lzy_data_dir() -> str:
+    """Returns LzyDownloader's shared Qt app-local data directory."""
     if os.name == 'nt':
         app_data = os.getenv('LOCALAPPDATA')
         if app_data:
@@ -1031,12 +1030,27 @@ def get_lzy_server_data_dir() -> str:
         else:
             data_root = Path.home() / '.local' / 'share'
 
-    return str(data_root / 'LzyDownloader' / 'Server')
+    return str(data_root / 'LzyDownloader')
+
+
+def get_lzy_server_data_dir() -> str:
+    """Returns the bridge-private state directory retained for compatibility."""
+    return os.path.join(get_lzy_data_dir(), 'Server')
 
 
 def get_download_backup_path() -> str:
-    """Returns the server-mode queue backup file used by LzyDownloader."""
-    return os.path.join(get_lzy_server_data_dir(), 'downloads_backup.json')
+    """Returns the shared queue backup, with read-only legacy fallback.
+
+    A current C++ coordinator migrates the old Server backup at startup. The
+    fallback lets the bridge pre-register legacy recovery items before that
+    startup, so its first webhook events still have Discord message owners.
+    """
+    shared_path = os.path.join(get_lzy_data_dir(), 'downloads_backup.json')
+    if os.path.exists(shared_path):
+        return shared_path
+
+    legacy_path = os.path.join(get_lzy_server_data_dir(), 'downloads_backup.json')
+    return legacy_path if os.path.exists(legacy_path) else shared_path
 
 
 def get_discord_message_state_path() -> str:
@@ -1402,14 +1416,6 @@ def check_api_health() -> None:
             "Please ensure `LZY_EXECUTABLE_PATH` is set correctly in your `.env` file."
         )
 
-    # Clean up any stale token from a previous run so we don't try to use it
-    key_path = os.path.join(get_lzy_server_data_dir(), 'api_token.txt')
-    if os.path.exists(key_path):
-        try:
-            os.remove(key_path)
-        except OSError:
-            pass
-
     print("LzyDownloader not detected. Launching in server mode...")
     app_dir = os.path.dirname(lzy_executable_path)
     # CREATE_NO_WINDOW flag prevents a console from flashing on Windows
@@ -1425,9 +1431,10 @@ def check_api_health() -> None:
     for _ in range(20):  # Poll for up to 20 seconds
         time.sleep(1)
         
-        if _lzy_process.poll() is not None:
+        launch_exit_code = _lzy_process.poll()
+        if launch_exit_code is not None and launch_exit_code != 0:
             raise RuntimeError(
-                f"**LzyDownloader crashed or closed immediately.** Exit code: {_lzy_process.returncode}.\n"
+                f"**LzyDownloader crashed or closed immediately.** Exit code: {launch_exit_code}.\n"
                 "Try running the desktop executable manually to check for missing runtime dependencies."
             )
 
@@ -1443,6 +1450,8 @@ def check_api_health() -> None:
                 f"{BASE_URL}/status", headers=headers, timeout=2, proxies=proxies
             )
             if res.status_code == 200:
+                if launch_exit_code == 0:
+                    print("Attached to the existing LzyDownloader coordinator.")
                 return  # It's running and authorized, we're good.
             last_error = f"API returned status {res.status_code}"
         except requests.exceptions.RequestException as e:

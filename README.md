@@ -36,8 +36,10 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 - **Slash Commands:** Supports `/download <url>`, `/audio <url>`, `/downloads`, `/cancel <job_id>`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop`.
 - **Direct Message Downloads:** Send the bot a URL in DMs to enqueue a download from anywhere Discord is available.
 - **Offline DM Catch-Up:** On startup, the bot checks recent authorized DM history for URL requests it missed while offline and starts any unacknowledged requests oldest-first, while skipping URLs that are already present in the recovery backup so resumed downloads are not queued twice.
-- **Auto-Launching:** If the LzyDownloader app is closed, the bot automatically launches it silently in headless server mode (`--server --exit-after`).
-- **Startup Recovery:** If server-mode downloads were saved in `downloads_backup.json`, the bot registers them before relaunching LzyDownloader, prunes completed entries, and resumes progress tracking without losing startup webhook events.
+- **Coordinator attach:** If the Local API is unavailable, the bot launches
+  `--server --exit-after`. That starts a headless coordinator when needed or
+  attaches to an existing GUI coordinator without creating a second queue.
+- **Startup Recovery:** If coordinator-owned downloads were saved in `downloads_backup.json`, the bot registers them before attaching to or starting LzyDownloader, prunes completed entries, and resumes progress tracking without losing startup webhook events.
 - **Restart-Safe Discord Status:** Active jobs retain their Discord channel/message IDs in a bridge-owned state file, written atomically so a bot restart edits the original status message instead of posting a new one. Older jobs are migrated by matching the most recent 100 DM messages by URL or unique backed-up title; duplicate legacy status messages are updated together. A missing or corrupt state file is treated as empty and does not prevent startup.
 - **Dynamic URL Expansion:** Seamlessly maps internal ID changes from URL expansions (e.g., YouTube Shorts or playlists) back to the original Discord request to keep the UI perfectly synced.
 - **Failed Job Recovery:** Failed, stopped, or errored backup entries can be retried without restarting the bot.
@@ -57,7 +59,7 @@ Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard 
 - **Single-Instance Guard:** Prevents accidentally running multiple bridge processes at the same time.
 - **Sleep/Wake Recovery:** The bridge watches prolonged Discord Gateway loss and exits after a bounded recovery period so the Windows supervisor can restart it; the launcher also prevents duplicate supervisor loops. `/stop` and the stop script write the shutdown marker before exiting so an intentional stop is not restarted.
 - **Non-Blocking Launcher:** The Windows start script returns immediately after starting its detached supervisor, while the supervisor continues managing the bridge in the background.
-- **Auto-Shutdown & Cleanup:** The C++ app automatically closes when the queue is finished. If the bot crashes or is stopped, any lingering headless C++ processes are terminated to prevent orphaned background work.
+- **Coordinator-Safe Cleanup:** The bridge does not terminate LzyDownloader when it exits because the coordinator may own the visible GUI or other automation work. Recovery state remains available for the next bridge session.
 - **Persistent Diagnostics:** Bridge output, `discord.py`/`aiohttp` diagnostics, and uncaught Python tracebacks are written to `bot.log` beside the bridge script. Incoming webhook payloads are also logged for troubleshooting, so protect this file because it may contain requested URLs, titles, or backend error text. The active file rotates at 10 MB; archived files are timestamped and five are retained.
 
 ## Prerequisites
@@ -125,10 +127,10 @@ active tracking table; it never starts a replacement downloader process for
 this operation.
 
 ## Runtime Files
-- API token: the bridge checks the server path before the GUI path under the platform data root: `%LOCALAPPDATA%\LzyDownloader` on Windows, `$XDG_DATA_HOME/LzyDownloader` (or `~/.local/share/LzyDownloader`) on Linux, and `~/Library/Application Support/LzyDownloader` on macOS
-- Server-mode backup queue: `<platform data root>/LzyDownloader/Server/downloads_backup.json`
+- API token: `<platform data root>/LzyDownloader/api_token.txt`
+- Shared backup queue: `<platform data root>/LzyDownloader/downloads_backup.json`
 - Discord status-message state: `<platform data root>/LzyDownloader/Server/discord_message_state.json` (active job references only; written atomically and removed as jobs become terminal)
-- Bridge-created recovery archives: `<platform data root>/LzyDownloader/Server/downloads_backup.json.*.bak`
+- Bridge-created recovery archives: `<platform data root>/LzyDownloader/downloads_backup.json.*.bak`
 - Example environment template: `.env.example`
 - Bridge log: `bot.log` beside `lzy_downloader_discord_bridge.py`; rotated archives use names such as `bot_2026-08-12_231530.log` and five are retained. Logs can contain webhook URLs, titles, and errors; restrict access to them.
 

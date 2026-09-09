@@ -11,8 +11,12 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
   - Accepts authorized direct-message URLs as standard video download requests.
   - Scans recent authorized direct messages on startup and queues unacknowledged offline URL requests oldest-first, while skipping URLs already present in the recovery backup queue to avoid duplicate re-queueing.
   - Sends online and offline notification DMs to the authorized user when connecting or gracefully shutting down.
-  - Checks the health of the local C++ API, launches the Download Worker if it is not running, and ensures it is properly terminated when the bridge shuts down.
-  - Reads and validates the local bearer token from the server token path, then the GUI token path, under the platform data root: `%LOCALAPPDATA%` on Windows, XDG data or `~/.local/share` on Linux, and `~/Library/Application Support` on macOS.
+  - Checks the health of the local C++ API and asks the shared downloader
+    coordinator to expose it when necessary; it never terminates that
+    coordinator on bridge shutdown.
+  - Reads and validates the coordinator-wide local bearer token under the
+    platform data root: `%LOCALAPPDATA%` on Windows, XDG data or
+    `~/.local/share` on Linux, and `~/Library/Application Support` on macOS.
   - Hosts an asynchronous webhook listener (`aiohttp`) to receive push updates from the C++ app.
   - Formats webhook JSON payloads into compact Unicode progress bars, displays real-time queue positions, and updates Discord messages with a debounce mechanism.
   - Uses the C++ `overall_progress` webhook field for multi-stream jobs so Discord percentages remain monotonic across video/audio stream handoff.
@@ -24,7 +28,9 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
   - Pre-registers all queued recovery jobs before launching the C++ worker so startup webhook events cannot arrive before bridge tracking exists.
   - Persists active job Discord message references with atomic state-file replacement and reconnects those messages after a bridge restart; missing or corrupt state is recoverable, while legacy progress messages are migrated from at most 100 recent DM messages when their URL or unique backed-up title identifies them.
   - Sanitizes dynamic webhook text (like titles and status updates) to prevent accidental Discord markdown rendering, and redacts Windows, POSIX, and local file-URI paths before diagnostic text is sent to Discord.
-  - Reads `downloads_backup.json` from the platform data root under `LzyDownloader/Server` to resume startup work, prune completed backup entries, and retry or clear inactive recovery jobs.
+  - Reads the coordinator-owned `downloads_backup.json` from the platform data
+    root to resume startup work, prune completed backup entries, and retry or
+    clear inactive recovery jobs.
   - Uses extractor-independent URL identity normalization to avoid re-queueing equivalent recovery entries or offline DM requests that differ only by tracking/share parameters.
   - Includes backend `error` diagnostics in terminal Discord messages when supplied by a webhook.
   - Archives previous backup files before recovery cleanup so recovery state is not discarded silently.
@@ -33,9 +39,13 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
   - Writes bridge, library, exception, and incoming webhook diagnostics to `bot.log`; log files may contain URLs, titles, backend errors, and local diagnostic details and must be treated as sensitive local data. Resolved local paths must not be included in Discord-facing messages.
 
 ## 2. The Download Worker Agent (C++ App)
-The headless instance of the LzyDownloader Qt6 application.
+The per-user LzyDownloader Qt6 coordinator, which can run headlessly or expose
+the GUI without changing queue ownership.
 
-- **Lifecycle:** Ephemeral. Launched on demand by the Interaction Agent via CLI (`--server --exit-after`); cleanly shuts itself down when the queue is empty, and is forcefully terminated if the Interaction Agent crashes or stops.
+- **Lifecycle:** Started or attached to on demand by the Interaction Agent via
+  CLI (`--server --exit-after`). A secondary launch exits successfully after it
+  asks an existing GUI coordinator to expose the API. The bridge never kills a
+  coordinator because it may also be serving the user's GUI.
 - **Tasks:**
   - Processes the actual media downloads.
   - Applies the user's shared LzyDownloader GUI preferences from the main application settings.
@@ -43,7 +53,9 @@ The headless instance of the LzyDownloader Qt6 application.
   - Exposes these metrics over the local HTTP server (`127.0.0.1:8765`).
   - Pushes live state changes to the Interaction Agent via an HTTP `POST` webhook (`127.0.0.1:8766/webhook`).
   - Includes `parent_id` and `url` alongside the `job_id` in its webhook payloads, allowing the bridge to map expanded child jobs back to the original Discord requests.
-  - Persists server-mode queue recovery data under the platform data root in `LzyDownloader/Server/downloads_backup.json`, matching the bridge's Windows, Linux, and macOS token/backup locations.
+  - Persists shared queue recovery data as
+    `LzyDownloader/downloads_backup.json`, matching the bridge's Windows,
+    Linux, and macOS token/backup locations.
 
 ## 3. Development Requirements
 

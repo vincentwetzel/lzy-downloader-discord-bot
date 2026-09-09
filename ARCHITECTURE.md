@@ -16,8 +16,8 @@ under their own service or process supervisor.
   - Exposes authenticated `POST /cancel` with `job_id` to route cancellation through the C++ download manager.
   - Exposes `GET /status` to retrieve active jobs with URL, title, progress, speed, ETA, and status data.
   - Pushes real-time state changes to the Discord bot's webhook server.
-  - Persists server-mode queue state in `downloads_backup.json` so interrupted or failed work can be inspected or recovered later.
-- **Server Mode:** Launched with `--server --exit-after`, allowing it to run headlessly and terminate when the download queue completes.
+  - Persists coordinator-owned queue state in `downloads_backup.json` so interrupted or failed work can be inspected or recovered later.
+- **Server Mode:** `--server --exit-after` starts a headless coordinator when none exists, or attaches to the existing GUI coordinator and asks it to expose the API.
 - **Settings Ownership:** User preferences remain owned by the C++ app's shared `settings.ini`; the bridge does not create or modify settings files.
 
 ### 2. Discord Bridge Bot (Python Frontend)
@@ -30,7 +30,7 @@ under their own service or process supervisor.
   - Accepts authorized direct-message URLs as standard video downloads.
   - Scans recent authorized DM history on startup for unacknowledged URL requests sent while the bot was offline.
   - Notifies the authorized user via DM when it successfully connects to Discord or gracefully shuts down.
-  - Manages the lifecycle of the C++ app, including auto-launching it when the local API is unavailable and forcefully terminating it when the bridge shuts down.
+  - Attaches to the C++ coordinator when the local API is unavailable. It does not terminate the coordinator on bridge shutdown because it may also own the visible GUI.
   - Hosts a local webhook server (`127.0.0.1:8766`) to receive instant, event-driven progress updates from the C++ app.
   - **Strictly Event-Driven:** Polling the local API (e.g., `GET /status`) for live progress updates is explicitly forbidden. All state tracking must rely solely on the push updates provided by the webhook server.
   - Tracks active download jobs so the user receives completion and queue-empty notifications.
@@ -40,7 +40,7 @@ under their own service or process supervisor.
 
 ## Security & Authentication
 - **Local Bind Only:** The C++ API server only listens on localhost (`127.0.0.1`), preventing external network access.
-- **Bearer Token Auth:** The C++ application generates a random API key and writes it to its app-local data directory. The Python bot checks the server token path first, then the GUI token path, validates candidates against the local API, and includes the working token in the `Authorization: Bearer <token>` header. The platform data root is `%LOCALAPPDATA%` on Windows, `$XDG_DATA_HOME` or `~/.local/share` on Linux, and `~/Library/Application Support` on macOS.
+- **Bearer Token Auth:** The C++ coordinator generates one random API key at `<platform data root>/LzyDownloader/api_token.txt`. The Python bot validates it against the local API and includes the working token in the `Authorization: Bearer <token>` header. The platform data root is `%LOCALAPPDATA%` on Windows, `$XDG_DATA_HOME` or `~/.local/share` on Linux, and `~/Library/Application Support` on macOS.
 - **User Authorization:** The bridge requires `AUTHORIZED_USER_ID` and rejects commands or DMs from any other Discord user.
 - **Local Single Instance:** The bridge binds a local UDP socket on `127.0.0.1:48765` to prevent multiple bot processes from issuing competing requests.
 - **Environment Template:** `.env.example` documents the required bridge variables (`DISCORD_BOT_TOKEN`, `AUTHORIZED_USER_ID`, and `LZY_EXECUTABLE_PATH`) for local setup.
@@ -65,7 +65,7 @@ under their own service or process supervisor.
 - This duplicate-prevention step keeps startup catch-up from re-queuing downloads that are already scheduled for recovery from `downloads_backup.json`.
 
 ## Recovery Flow
-- The bridge reads `<platform data root>/LzyDownloader/Server/downloads_backup.json` for server-mode backup entries.
+- The bridge reads `<platform data root>/LzyDownloader/downloads_backup.json` for shared coordinator backup entries.
 - Queued resumable entries can be resumed after startup by relaunching LzyDownloader and reattaching Discord progress tracking.
 - The bridge persists each active job's Discord channel/message IDs in `discord_message_state.json` using an atomic temporary-file replacement. Startup fetches those messages before creating any replacement; for pre-state jobs it scans at most the most recent 100 DM messages and matches the backed-up URL or a title unique within the recovery batch. If multiple legacy copies match, all copies are edited together so stale partial-progress messages do not remain frozen. A missing or invalid state file is ignored and rebuilt as jobs are registered.
 - Recovery tracking entries are registered before the first LzyDownloader launch because server startup immediately emits events for every restored queue item. `on_ready()` completes this setup before missed-DM catch-up can start another task.
@@ -79,7 +79,7 @@ under their own service or process supervisor.
 ## Local API Contract
 
 - The C++ API listens on `127.0.0.1:8765`; the bridge webhook listener accepts `POST /webhook` on `127.0.0.1:8766`.
-- API requests use a bearer token discovered from the server or GUI `api_token.txt` path and validated against the local API. Enqueue requests include `url`, `download_type`, `override_archive: true`, and a caller-supplied `job_id`/`id`.
+- API requests use the coordinator-wide `api_token.txt` and validate it against the local API. Enqueue requests include `url`, `download_type`, `override_archive: true`, and a caller-supplied `job_id`/`id`.
 - Cancellation sends `POST /cancel` with `{ "job_id": "..." }`. Cancellation is only sent for a job currently tracked by the bridge; the terminal result arrives through the webhook.
 - Webhook payloads may identify a job with `job_id`, `id`, `jobId`, or `lzy_id`, and may include `parent_id`, `url`, `status`, `title`, progress fields, and `error`.
 - Multi-stream webhook payloads may include `overall_progress` as a finite percentage from 0 through 100; the bridge uses that field for active Discord rendering because the ordinary `progress` field is scoped to the currently transferring stream and can reset at video/audio handoff. Regressive aggregate updates are ignored while the job remains active, while terminal updates may set the final raw progress value.
@@ -116,8 +116,8 @@ the bridge process.
 
 ## Runtime Files
 - `.env` in the bridge directory stores `DISCORD_BOT_TOKEN`, `AUTHORIZED_USER_ID`, and `LZY_EXECUTABLE_PATH`.
-- `<platform data root>/LzyDownloader/Server/api_token.txt` is the preferred local API bearer-token path; `<platform data root>/LzyDownloader/api_token.txt` is also checked for GUI-managed tokens. The platform data root follows the Windows, Linux, and macOS locations described above.
-- `<platform data root>/LzyDownloader/Server/downloads_backup.json` stores LzyDownloader server-mode recovery state.
+- `<platform data root>/LzyDownloader/api_token.txt` is the coordinator-wide local API bearer-token path. The platform data root follows the Windows, Linux, and macOS locations described above.
+- `<platform data root>/LzyDownloader/downloads_backup.json` stores shared queue recovery state.
 - `<platform data root>/LzyDownloader/Server/discord_message_state.json` stores bridge-owned active-job Discord message references in a versioned JSON document; writes use an atomic replacement and terminal jobs are removed from it.
-- `<platform data root>/LzyDownloader/Server/downloads_backup.json.*.bak` stores bridge-created backup archives.
+- `<platform data root>/LzyDownloader/downloads_backup.json.*.bak` stores bridge-created backup archives.
 - `bot.log` beside `lzy_downloader_discord_bridge.py` stores active diagnostics, including incoming webhook payloads; rotated files use timestamped names such as `bot_2026-08-12_231530.log`. Restrict access because entries may contain requested URLs, titles, and backend errors.

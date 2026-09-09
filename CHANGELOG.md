@@ -6,13 +6,21 @@ changes documented in this repository.
 
 ## Unreleased
 
+### Changed
+
+- **Shared coordinator support:** The bridge now uses LzyDownloader's shared
+  API token and queue backup, accepts a successful secondary `--server` launch
+  as an attachment to an existing GUI coordinator, and never terminates that
+  coordinator during bridge shutdown. It can still pre-register recovery items
+  from a legacy Server backup during the one-time desktop migration.
+
 ### Documentation
 
 - Documented explicit `aiohttp` installation, dynamic `.env` reloads before
   worker launch, Unicode progress-bar rendering, and the sensitive contents of
   diagnostic logs.
-- Clarified that API token discovery checks both server-mode and GUI token
-  locations, validating candidates against the local API.
+- Documented coordinator-wide API-token discovery and the read-only legacy
+  Server-token fallback used during upgrades.
 - Documented that resolved local paths are redacted from Discord-facing
   diagnostics and replaced the executable-path example with a symbolic value.
 - Documented Windows-only launcher/supervisor conveniences separately from the
@@ -77,8 +85,9 @@ changes documented in this repository.
 
 ### Compatibility and safety
 
-- Existing server-mode recovery files and the shared C++ API token location
-  remain unchanged.
+- Legacy server-mode recovery files remain readable through a read-only
+  fallback while the C++ coordinator migrates active state to the shared
+  queue and token locations.
 - Only the authorized Discord user can inspect active jobs or request
   cancellation.
 - Dynamic titles, statuses, and backend diagnostics continue to be escaped
