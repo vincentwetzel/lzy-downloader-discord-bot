@@ -9,7 +9,7 @@ supervisor are Windows conveniences; POSIX deployments run the Python entrypoint
 under their own service or process supervisor.
 
 ### 1. Local API Server (C++ Backend)
-- **Endpoint:** `127.0.0.1:8765`
+- **Endpoint:** `127.0.0.1:<configured-port>` (default `8765`, discovered from the desktop app's `api_port.txt`)
 - **Framework:** C++ Qt6
 - **Features:**
   - Exposes `POST /enqueue` to add downloads to the queue, including the requested download type (`video` or `audio`).
@@ -78,7 +78,8 @@ under their own service or process supervisor.
 
 ## Local API Contract
 
-- The C++ API listens on `127.0.0.1:8765`; the bridge webhook listener accepts `POST /webhook` on `127.0.0.1:8766`.
+- The C++ API listens on `127.0.0.1:<configured-port>` (default `8765`); the bridge webhook listener accepts `POST /webhook` on `127.0.0.1:8766`.
+- The bridge reads and validates `<platform data root>/LzyDownloader/api_port.txt` before each API operation, falling back to `8765` when the discovery file is absent or invalid.
 - API requests use the coordinator-wide `api_token.txt` and validate it against the local API. Enqueue requests include `url`, `download_type`, `override_archive: true`, and a caller-supplied `job_id`/`id`.
 - Cancellation sends `POST /cancel` with `{ "job_id": "..." }`. Cancellation is only sent for a job currently tracked by the bridge; the terminal result arrives through the webhook.
 - Webhook payloads may identify a job with `job_id`, `id`, `jobId`, or `lzy_id`, and may include `parent_id`, `url`, `status`, `title`, progress fields, and `error`.
@@ -117,6 +118,7 @@ the bridge process.
 ## Runtime Files
 - `.env` in the bridge directory stores `DISCORD_BOT_TOKEN`, `AUTHORIZED_USER_ID`, and `LZY_EXECUTABLE_PATH`.
 - `<platform data root>/LzyDownloader/api_token.txt` is the coordinator-wide local API bearer-token path. The platform data root follows the Windows, Linux, and macOS locations described above.
+- `<platform data root>/LzyDownloader/api_port.txt` is the coordinator-wide Local API port discovery path. The bridge validates its integer value and falls back to `8765` when it is absent or invalid.
 - `<platform data root>/LzyDownloader/downloads_backup.json` stores shared queue recovery state.
 - `<platform data root>/LzyDownloader/Server/discord_message_state.json` stores bridge-owned active-job Discord message references in a versioned JSON document; writes use an atomic replacement and terminal jobs are removed from it.
 - `<platform data root>/LzyDownloader/downloads_backup.json.*.bak` stores bridge-created backup archives.

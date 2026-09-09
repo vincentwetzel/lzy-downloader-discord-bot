@@ -1,5 +1,6 @@
 import asyncio
 import os
+import shutil
 import sys
 import unittest
 import uuid
@@ -65,6 +66,21 @@ class DiscordMessageRecoveryTests(unittest.TestCase):
         finally:
             state_path.unlink(missing_ok=True)
             Path(str(state_path) + ".tmp").unlink(missing_ok=True)
+
+    def test_api_port_discovery_uses_valid_port_and_default_fallback(self):
+        data_path = Path(__file__).parents[1] / f".test-api-port-{uuid.uuid4().hex}"
+        data_path.mkdir()
+        data_dir = str(data_path)
+        try:
+            with patch.object(bridge, "get_lzy_data_dir", return_value=data_dir):
+                Path(data_dir, "api_port.txt").write_text("18765\n", encoding="ascii")
+                self.assertEqual(bridge.get_lzy_api_port(), 18765)
+                self.assertEqual(bridge.get_lzy_api_base_url(), "http://127.0.0.1:18765")
+
+                Path(data_dir, "api_port.txt").write_text("70000\n", encoding="ascii")
+                self.assertEqual(bridge.get_lzy_api_port(), bridge.DEFAULT_API_PORT)
+        finally:
+            shutil.rmtree(data_path, ignore_errors=True)
 
     def test_legacy_history_migration_finds_all_duplicate_status_messages(self):
         messages = [
@@ -135,6 +151,7 @@ class DiscordMessageRecoveryTests(unittest.TestCase):
             with patch.object(bridge, "get_lzy_api_key", side_effect=[None, "shared-token"]), \
                  patch.object(bridge, "load_dotenv"), \
                  patch.object(bridge.os.path, "exists", return_value=True), \
+                 patch.object(bridge, "validate_windows_executable_loadable"), \
                  patch.object(bridge.subprocess, "Popen", return_value=process), \
                  patch.object(bridge.requests, "get", return_value=response), \
                  patch.object(bridge.time, "sleep"):

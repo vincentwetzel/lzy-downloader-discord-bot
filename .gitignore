@@ -23,3 +23,4 @@ bot_*
 
 # LzyDownloader Main Project
 /LzyDownloader/
+lzy_downloader_discord_bridge.stop

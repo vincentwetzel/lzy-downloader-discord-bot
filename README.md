@@ -10,7 +10,7 @@ on Linux or macOS, run the Python entrypoint directly or provide an equivalent
 process supervisor.
 
 ## Overview
-Instead of baking heavy Discord SDKs directly into the C++ desktop app, LzyDownloader exposes a secure local API (`127.0.0.1:8765`). This Python bot listens for Discord slash commands and authorized DMs, communicates with the local C++ API, and provides real-time progress updates directly in Discord.
+Instead of baking heavy Discord SDKs directly into the C++ desktop app, LzyDownloader exposes a secure local API (`127.0.0.1:<configured-port>`, default `8765`). This Python bot listens for Discord slash commands and authorized DMs, communicates with the local C++ API, and provides real-time progress updates directly in Discord. The bridge reads the app-local `api_port.txt` discovery file, so changing the port in LzyDownloader's Advanced Settings does not require a bridge configuration change.
 
 ## Available Commands
 *Project Requirement: This list must be kept updated as new commands are added to the bot.*
@@ -128,6 +128,7 @@ this operation.
 
 ## Runtime Files
 - API token: `<platform data root>/LzyDownloader/api_token.txt`
+- API port discovery: `<platform data root>/LzyDownloader/api_port.txt`
 - Shared backup queue: `<platform data root>/LzyDownloader/downloads_backup.json`
 - Discord status-message state: `<platform data root>/LzyDownloader/Server/discord_message_state.json` (active job references only; written atomically and removed as jobs become terminal)
 - Bridge-created recovery archives: `<platform data root>/LzyDownloader/downloads_backup.json.*.bak`

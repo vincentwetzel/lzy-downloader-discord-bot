@@ -50,12 +50,16 @@ the GUI without changing queue ownership.
   - Processes the actual media downloads.
   - Applies the user's shared LzyDownloader GUI preferences from the main application settings.
   - Calculates speeds, ETAs, progress metrics, and job statuses.
-  - Exposes these metrics over the local HTTP server (`127.0.0.1:8765`).
+  - Exposes these metrics over the local HTTP server
+    (`127.0.0.1:<configured-port>`, default `8765`). The bridge reads the
+    desktop app-local `api_port.txt` discovery file before API requests.
   - Pushes live state changes to the Interaction Agent via an HTTP `POST` webhook (`127.0.0.1:8766/webhook`).
   - Includes `parent_id` and `url` alongside the `job_id` in its webhook payloads, allowing the bridge to map expanded child jobs back to the original Discord requests.
   - Persists shared queue recovery data as
     `LzyDownloader/downloads_backup.json`, matching the bridge's Windows,
     Linux, and macOS token/backup locations.
+  - Uses `LzyDownloader/api_port.txt` as the shared Local API port discovery
+    file; an absent or invalid file falls back to port `8765`.
 
 ## 3. Development Requirements
 

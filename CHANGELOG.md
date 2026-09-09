@@ -8,6 +8,11 @@ changes documented in this repository.
 
 ### Changed
 
+- **Headless launch diagnostics:** On Windows, the bridge validates that
+  LzyDownloader can load before spawning it, reports missing runtime DLLs in
+  Discord, and starts the child with hidden-window flags.
+- **Configurable desktop API port:** The bridge now reads the C++ app-local
+  `api_port.txt` discovery file and falls back to the stable `8765` default.
 - **Shared coordinator support:** The bridge now uses LzyDownloader's shared
   API token and queue backup, accepts a successful secondary `--server` launch
   as an attachment to an existing GUI coordinator, and never terminates that

@@ -119,8 +119,7 @@ TOKEN: Optional[str] = os.getenv('DISCORD_BOT_TOKEN')
 AUTHORIZED_USER_ID: Optional[str] = os.getenv('AUTHORIZED_USER_ID')
 
 # LzyDownloader Local API Settings
-API_PORT: int = 8765
-BASE_URL: str = f"http://127.0.0.1:{API_PORT}"
+DEFAULT_API_PORT: int = 8765
 BACKUP_ARCHIVE_RETENTION: int = 2
 DISCORD_MESSAGE_HISTORY_LIMIT: int = 100
 DISCORD_MESSAGE_STATE_FILENAME: str = "discord_message_state.json"
@@ -726,7 +725,7 @@ def cancel_job_request(job_id: str) -> Tuple[bool, str]:
     proxies = {"http": "", "https": ""}
     try:
         response = requests.post(
-            f"{BASE_URL}/cancel",
+            f"{get_lzy_api_base_url()}/cancel",
             json={"job_id": job_id},
             headers=headers,
             timeout=10,
@@ -999,7 +998,7 @@ def get_lzy_api_key() -> Optional[str]:
     for key in keys_to_try:
         try:
             headers = {"Authorization": f"Bearer {key}"}
-            res = requests.get(f"{BASE_URL}/status", headers=headers, timeout=1, proxies=proxies)
+            res = requests.get(f"{get_lzy_api_base_url()}/status", headers=headers, timeout=1, proxies=proxies)
             if res.status_code == 200:
                 return key
         except requests.exceptions.RequestException:
@@ -1031,6 +1030,53 @@ def get_lzy_data_dir() -> str:
             data_root = Path.home() / '.local' / 'share'
 
     return str(data_root / 'LzyDownloader')
+
+
+def get_lzy_api_port() -> int:
+    """Reads the desktop API port, falling back to the stable default."""
+    port_path = Path(get_lzy_data_dir()) / 'api_port.txt'
+    try:
+        port = int(port_path.read_text(encoding='ascii').strip())
+        if 1024 <= port <= 65535:
+            return port
+    except (OSError, ValueError):
+        pass
+    return DEFAULT_API_PORT
+
+
+def get_lzy_api_base_url() -> str:
+    """Returns the current localhost API base URL published by the desktop app."""
+    return f"http://127.0.0.1:{get_lzy_api_port()}"
+
+
+def validate_windows_executable_loadable(executable_path: str) -> None:
+    """Rejects broken Windows binaries before the loader can show a modal error."""
+    if os.name != 'nt':
+        return
+
+    import ctypes
+
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel32.LoadLibraryExW.argtypes = [ctypes.c_wchar_p, ctypes.c_void_p, ctypes.c_uint32]
+    kernel32.LoadLibraryExW.restype = ctypes.c_void_p
+    kernel32.FreeLibrary.argtypes = [ctypes.c_void_p]
+    kernel32.FreeLibrary.restype = ctypes.c_int
+
+    ctypes.set_last_error(0)
+    handle = kernel32.LoadLibraryExW(executable_path, None, 0)
+    if not handle:
+        error_code = ctypes.get_last_error()
+        if error_code == 126:
+            raise RuntimeError(
+                "**LzyDownloader cannot start.** A required Windows runtime DLL is missing "
+                "beside the executable. Rebuild or reinstall LzyDownloader so its runtime "
+                "DLLs are deployed with the application."
+            )
+        raise RuntimeError(
+            f"**LzyDownloader cannot start.** Windows loader error {error_code}."
+        )
+
+    kernel32.FreeLibrary(handle)
 
 
 def get_lzy_server_data_dir() -> str:
@@ -1395,7 +1441,7 @@ def check_api_health() -> None:
         if api_key:
             headers = {"Authorization": f"Bearer {api_key}"}
             res = requests.get(
-                f"{BASE_URL}/status", headers=headers, timeout=2, proxies=proxies
+                f"{get_lzy_api_base_url()}/status", headers=headers, timeout=2, proxies=proxies
             )
             if res.status_code == 200:
                 return  # It's running and authorized, we're good.
@@ -1416,14 +1462,22 @@ def check_api_health() -> None:
             "Please ensure `LZY_EXECUTABLE_PATH` is set correctly in your `.env` file."
         )
 
+    validate_windows_executable_loadable(lzy_executable_path)
+
     print("LzyDownloader not detected. Launching in server mode...")
     app_dir = os.path.dirname(lzy_executable_path)
     # CREATE_NO_WINDOW flag prevents a console from flashing on Windows
     creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+    startupinfo = None
+    if os.name == 'nt':
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = getattr(subprocess, 'SW_HIDE', 0)
     _lzy_process = subprocess.Popen(
         [lzy_executable_path, "--server", "--exit-after"], 
         cwd=app_dir, 
-        creationflags=creation_flags
+        creationflags=creation_flags,
+        startupinfo=startupinfo,
     )
 
     # Now, poll for it to become ready
@@ -1447,7 +1501,7 @@ def check_api_health() -> None:
 
             headers = {"Authorization": f"Bearer {api_key}"}
             res = requests.get(
-                f"{BASE_URL}/status", headers=headers, timeout=2, proxies=proxies
+                f"{get_lzy_api_base_url()}/status", headers=headers, timeout=2, proxies=proxies
             )
             if res.status_code == 200:
                 if launch_exit_code == 0:
@@ -1763,7 +1817,7 @@ async def run_download_job(
         try:
             res = await asyncio.to_thread(
                 requests.post,
-                f"{BASE_URL}/enqueue",
+                f"{get_lzy_api_base_url()}/enqueue",
                 json=payload,
                 headers=headers,
                 timeout=30,

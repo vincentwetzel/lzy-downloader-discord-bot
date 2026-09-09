@@ -59,7 +59,7 @@ Welcome to the coding standards guide for the LzyDownloader Discord Bot project.
 * **Markdown Sanitization**: Dynamic content received from external sources (like video titles or API error messages) must be sanitized using `discord.utils.escape_markdown()` to prevent UI breakage or unintended formatting (e.g., malicious spoiler tags).
 * **Actionable User Errors**: When surfacing errors to Discord (such as a failure to reach the C++ application), try to include actionable troubleshooting steps (e.g., "Check if LzyDownloader is installed") alongside the raw error string to assist the user.
 * **Magic Numbers**: Avoid hardcoding obscure constants (e.g., arbitrary timeouts like `43200` or socket ports like `48765`) deep in the code. Extract these to clearly named constant variables at the top of the module.
-* **String Formatting**: Prefer modern Python f-strings (e.g., `f"{BASE_URL}/status"`) over older `%` formatting or `.format()` for readability.
+* **String Formatting**: Prefer modern Python f-strings (e.g., `f"{get_lzy_api_base_url()}/status"`) over older `%` formatting or `.format()` for readability.
 * **Regular Expressions**: For performance, especially within high-frequency event handlers like webhooks, compile regex patterns at the module level using `re.compile()` rather than evaluating them dynamically inside functions or loops.
 * **Import Organization**: Group imports logically: standard library first, followed by third-party packages, and finally local modules. (Using `isort` automates this).
 * **Environment Management**: Use a virtual environment (e.g., `python -m venv venv`) to manage dependencies.
