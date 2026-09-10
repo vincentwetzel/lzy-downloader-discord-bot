@@ -38,6 +38,14 @@ class FakeChannel:
         raise AssertionError("the migration test should use bounded history")
 
 
+class FakeWebhookRequest:
+    def __init__(self, payload):
+        self.payload = payload
+
+    async def json(self):
+        return self.payload
+
+
 class DiscordMessageRecoveryTests(unittest.TestCase):
     @staticmethod
     def temporary_state_path():
@@ -141,6 +149,33 @@ class DiscordMessageRecoveryTests(unittest.TestCase):
             self.assertIsNone(bridge._lzy_process)
         finally:
             bridge._lzy_process = previous_process
+
+    def test_terminal_enqueue_rejection_closes_tracked_job(self):
+        bot = bridge.LzyBot()
+        job_id = "pending-request-job"
+        url = "https://example.test/video"
+        bot.active_jobs[job_id] = bridge.build_active_job_data(url)
+
+        response = asyncio.run(
+            bot.handle_webhook(
+                FakeWebhookRequest(
+                    {
+                        "job_id": job_id,
+                        "url": url,
+                        "status": "failed",
+                        "error": "Another download request is already being processed.",
+                    }
+                )
+            )
+        )
+
+        self.assertEqual(response.status, 200)
+        self.assertTrue(bot.active_jobs[job_id]["is_final"])
+        self.assertEqual(bot.active_jobs[job_id]["final_status"], "failed")
+        self.assertEqual(
+            bot.active_jobs[job_id]["error"],
+            "Another download request is already being processed.",
+        )
 
     def test_secondary_server_exit_waits_for_existing_api(self):
         process = Mock()

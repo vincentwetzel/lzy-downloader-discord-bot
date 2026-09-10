@@ -29,7 +29,9 @@ under their own service or process supervisor.
   - Handles `/download`, `/audio`, `/downloads`, `/cancel`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop` slash commands.
   - Accepts authorized direct-message URLs as standard video downloads.
   - Scans recent authorized DM history on startup for unacknowledged URL requests sent while the bot was offline.
-  - Notifies the authorized user via DM when it successfully connects to Discord or gracefully shuts down.
+  - Notifies the authorized user via DM when it successfully connects to Discord or gracefully shuts down; the online message is a concise status notification.
+  - Makes `/help` public and includes links for users who want to install LzyDownloader and run their own bridge; the authorized owner's online notification does not repeat those instructions.
+  - Explains the same self-hosting setup when an unauthorized user invokes a restricted command or sends a direct message.
   - Attaches to the C++ coordinator when the local API is unavailable. It does not terminate the coordinator on bridge shutdown because it may also own the visible GUI.
   - Hosts a local webhook server (`127.0.0.1:8766`) to receive instant, event-driven progress updates from the C++ app.
   - **Strictly Event-Driven:** Polling the local API (e.g., `GET /status`) for live progress updates is explicitly forbidden. All state tracking must rely solely on the push updates provided by the webhook server.
@@ -41,7 +43,7 @@ under their own service or process supervisor.
 ## Security & Authentication
 - **Local Bind Only:** The C++ API server only listens on localhost (`127.0.0.1`), preventing external network access.
 - **Bearer Token Auth:** The C++ coordinator generates one random API key at `<platform data root>/LzyDownloader/api_token.txt`. The Python bot validates it against the local API and includes the working token in the `Authorization: Bearer <token>` header. The platform data root is `%LOCALAPPDATA%` on Windows, `$XDG_DATA_HOME` or `~/.local/share` on Linux, and `~/Library/Application Support` on macOS.
-- **User Authorization:** The bridge requires `AUTHORIZED_USER_ID` and rejects commands or DMs from any other Discord user.
+- **User Authorization:** The bridge requires `AUTHORIZED_USER_ID` and rejects restricted commands or download DMs from any other Discord user, while returning setup guidance so they can run their own private bridge. `/help` is intentionally public.
 - **Local Single Instance:** The bridge binds a local UDP socket on `127.0.0.1:48765` to prevent multiple bot processes from issuing competing requests.
 - **Environment Template:** `.env.example` documents the required bridge variables (`DISCORD_BOT_TOKEN`, `AUTHORIZED_USER_ID`, and `LZY_EXECUTABLE_PATH`) for local setup.
 

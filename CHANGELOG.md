@@ -8,6 +8,11 @@ changes documented in this repository.
 
 ### Changed
 
+- **Self-hosting guidance:** Public `/help` and unauthorized slash commands
+  or direct messages explain how users can install LzyDownloader and run the
+  bridge with their own Discord bot instead of only saying `Unauthorized` or
+  staying silent. The authorized owner's online notification remains
+  status-only.
 - **Headless launch diagnostics:** On Windows, the bridge validates that
   LzyDownloader can load before spawning it, reports missing runtime DLLs in
   Discord, and starts the child with hidden-window flags.
@@ -40,6 +45,9 @@ changes documented in this repository.
 
 ### Fixed
 
+- **Pending enqueue handling:** Discord jobs rejected while the shared
+  coordinator is already validating another request now receive the terminal
+  failure webhook instead of remaining tracked until the timeout.
 - Made bridge token, backup, and recovery-archive discovery follow the C++
   application's Windows, Linux, and macOS data directories instead of treating
   the Windows `%USERPROFILE%` template as a literal POSIX path.

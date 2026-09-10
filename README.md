@@ -24,16 +24,25 @@ Instead of baking heavy Discord SDKs directly into the C++ desktop app, LzyDownl
 - `/retry_failed` - Retry failed, stopped, or errored recovery jobs from `downloads_backup.json`.
 - `/stop` - Gracefully shut down the Discord bot.
 
-`/downloads` and `/cancel` responses are private to the authorized user. The
+`/help` is available to everyone so users can discover the project and its
+setup instructions. All other slash commands and direct-message actions are
+private to the authorized user. The
 `job_id` argument supports Discord autocomplete, which lists currently tracked
 jobs by title and ID. Cancellation is asynchronous: the command confirms that
 the request was accepted, and the original progress message is updated when
 the C++ backend emits the terminal `Cancelled`/`Canceled` webhook state.
 
-Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard video download without using a slash command. In DMs, send `ping` to verify that the bot is online or `cancel <job_id>` to request cancellation.
+Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard
+video download without using a slash command. In DMs, send `ping` to verify
+that the bot is online or `cancel <job_id>` to request cancellation. Other
+users receive setup instructions instead of a silent response.
 
 ## Features
 - **Slash Commands:** Supports `/download <url>`, `/audio <url>`, `/downloads`, `/cancel <job_id>`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop`.
+- **Self-serve Setup Guidance:** Public `/help` and unauthorized command/DM
+  responses link users to LzyDownloader and explain how to run the bridge with
+  their own Discord bot; the authorized owner's online notification remains a
+  concise status message.
 - **Direct Message Downloads:** Send the bot a URL in DMs to enqueue a download from anywhere Discord is available.
 - **Offline DM Catch-Up:** On startup, the bot checks recent authorized DM history for URL requests it missed while offline and starts any unacknowledged requests oldest-first, while skipping URLs that are already present in the recovery backup so resumed downloads are not queued twice.
 - **Coordinator attach:** If the Local API is unavailable, the bot launches

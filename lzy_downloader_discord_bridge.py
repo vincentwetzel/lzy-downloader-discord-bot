@@ -22,6 +22,24 @@ from typing import Optional, Callable, Awaitable, Any, Dict, List, Set, Tuple
 
 APP_VERSION: str = "1.2.9"
 GATEWAY_RECOVERY_TIMEOUT_SECONDS: int = 120
+LZYDOWNLOADER_URL: str = "https://github.com/vincentwetzel/lzy-downloader"
+DISCORD_BRIDGE_URL: str = "https://github.com/vincentwetzel/lzy-downloader-discord-bot"
+DISCORD_BRIDGE_SETUP_URL: str = f"{DISCORD_BRIDGE_URL}#installation"
+
+SETUP_GUIDANCE_MESSAGE: str = (
+    "**Set up LzyDownloader with your own Discord bot:**\n"
+    f"1. Install LzyDownloader: <{LZYDOWNLOADER_URL}>\n"
+    "2. Create your own Discord bot and invite it with the `bot` and "
+    "`applications.commands` scopes.\n"
+    f"3. Follow the bridge setup guide: <{DISCORD_BRIDGE_SETUP_URL}>"
+)
+UNAUTHORIZED_MESSAGE: str = (
+    "❌ Unauthorized. This bot is configured for its owner only.\n\n"
+    f"{SETUP_GUIDANCE_MESSAGE}"
+)
+ONLINE_MESSAGE: str = (
+    "🟢 **LzyDownloader Discord Bridge is now online!**"
+)
 
 # Load the Discord token from the .env file located in the script's directory
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -578,7 +596,7 @@ class LzyBot(discord.Client):
         if AUTHORIZED_USER_ID:
             try:
                 user = await self.fetch_user(int(AUTHORIZED_USER_ID))
-                await user.send("🟢 **LzyDownloader Discord Bridge is now online!**")
+                await user.send(ONLINE_MESSAGE)
 
                 # Check for missed DMs sent while the bot was offline
                 dm_channel = await user.create_dm()
@@ -673,8 +691,10 @@ class LzyBot(discord.Client):
         if message.author.bot or message.guild is not None:
             return
 
-        # Strictly enforce authorization
+        # Strictly enforce authorization, while explaining how another user
+        # can run a private bridge for their own LzyDownloader installation.
         if str(message.author.id) != AUTHORIZED_USER_ID:
+            await message.channel.send(UNAUTHORIZED_MESSAGE)
             return
 
         content = message.content.strip()
@@ -752,14 +772,14 @@ async def cancel_tracked_job(job_id: str) -> Tuple[bool, str]:
 @client.tree.command(name="ping", description="Ping the bot to check its status")
 async def ping(interaction: discord.Interaction) -> None:
     if str(interaction.user.id) != AUTHORIZED_USER_ID:
-        await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
+        await interaction.response.send_message(UNAUTHORIZED_MESSAGE, ephemeral=True)
         return
     await interaction.response.send_message("🏓 Pong! LzyDownloader Discord Bridge is online.")
 
 @client.tree.command(name="stop", description="Gracefully shut down the Discord bot")
 async def stop(interaction: discord.Interaction) -> None:
     if str(interaction.user.id) != AUTHORIZED_USER_ID:
-        await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
+        await interaction.response.send_message(UNAUTHORIZED_MESSAGE, ephemeral=True)
         return
     request_supervised_stop()
     await interaction.response.send_message("🛑 Shutting down the bot gracefully...")
@@ -767,23 +787,20 @@ async def stop(interaction: discord.Interaction) -> None:
 
 @client.tree.command(name="help", description="List all available commands")
 async def help_cmd(interaction: discord.Interaction) -> None:
-    if str(interaction.user.id) != AUTHORIZED_USER_ID:
-        await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
-        return
-        
     commands = client.tree.get_commands()
     help_text = "**Available Commands:**\n"
     for cmd in commands:
         if isinstance(cmd, app_commands.Command):
             help_text += f"`/{cmd.name}` - {cmd.description}\n"
-        
+
+    help_text += f"\n{SETUP_GUIDANCE_MESSAGE}"
     await interaction.response.send_message(help_text, ephemeral=True)
 
 @client.tree.command(name="download", description="Start a new download")
 @app_commands.describe(url="The URL of the media to download")
 async def download(interaction: discord.Interaction, url: str) -> None:
     if str(interaction.user.id) != AUTHORIZED_USER_ID:
-        await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
+        await interaction.response.send_message(UNAUTHORIZED_MESSAGE, ephemeral=True)
         return
         
     if not is_valid_url(url):
@@ -837,7 +854,7 @@ async def cancel_job_autocomplete(
 @client.tree.command(name="downloads", description="List active downloads and their job IDs")
 async def downloads(interaction: discord.Interaction) -> None:
     if str(interaction.user.id) != AUTHORIZED_USER_ID:
-        await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
+        await interaction.response.send_message(UNAUTHORIZED_MESSAGE, ephemeral=True)
         return
 
     if not client.active_jobs:
@@ -859,7 +876,7 @@ async def downloads(interaction: discord.Interaction) -> None:
 @app_commands.describe(job_id="The job ID from /downloads")
 async def cancel(interaction: discord.Interaction, job_id: str) -> None:
     if str(interaction.user.id) != AUTHORIZED_USER_ID:
-        await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
+        await interaction.response.send_message(UNAUTHORIZED_MESSAGE, ephemeral=True)
         return
 
     job_id = job_id.strip()
@@ -884,7 +901,7 @@ cancel.autocomplete("job_id")(cancel_job_autocomplete)
 @app_commands.describe(url="The URL of the media to download as audio")
 async def audio(interaction: discord.Interaction, url: str) -> None:
     if str(interaction.user.id) != AUTHORIZED_USER_ID:
-        await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
+        await interaction.response.send_message(UNAUTHORIZED_MESSAGE, ephemeral=True)
         return
         
     if not is_valid_url(url):
@@ -920,7 +937,7 @@ async def audio(interaction: discord.Interaction, url: str) -> None:
 @client.tree.command(name="clear_failed", description="Clear failed recovery jobs from the backup file")
 async def clear_failed(interaction: discord.Interaction) -> None:
     if str(interaction.user.id) != AUTHORIZED_USER_ID:
-        await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
+        await interaction.response.send_message(UNAUTHORIZED_MESSAGE, ephemeral=True)
         return
 
     removed_count, kept_count, archive_path = clear_failed_backup_items()
@@ -947,7 +964,7 @@ async def clear_failed(interaction: discord.Interaction) -> None:
 @client.tree.command(name="retry_failed", description="Retry failed recovery jobs without restarting the bot")
 async def retry_failed(interaction: discord.Interaction) -> None:
     if str(interaction.user.id) != AUTHORIZED_USER_ID:
-        await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
+        await interaction.response.send_message(UNAUTHORIZED_MESSAGE, ephemeral=True)
         return
 
     retry_count = len(deduplicate_retry_items([
