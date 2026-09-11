@@ -62,10 +62,12 @@ Welcome to the coding standards guide for the LzyDownloader Discord Bot project.
 * **String Formatting**: Prefer modern Python f-strings (e.g., `f"{get_lzy_api_base_url()}/status"`) over older `%` formatting or `.format()` for readability.
 * **Regular Expressions**: For performance, especially within high-frequency event handlers like webhooks, compile regex patterns at the module level using `re.compile()` rather than evaluating them dynamically inside functions or loops.
 * **Import Organization**: Group imports logically: standard library first, followed by third-party packages, and finally local modules. (Using `isort` automates this).
-* **Environment Management**: Use a virtual environment (e.g., `python -m venv venv`) to manage dependencies.
-* **Dependencies**: Maintain an up-to-date `requirements.txt`. Pin versions for production stability when appropriate, and test thoroughly before upgrading foundational packages (like `discord.py` or `requests`).
+* **Environment Management**: Use the repository-local `.venv` (created with `python -m venv .venv`) to manage dependencies.
+* **Dependencies**: Maintain an up-to-date `requirements.txt` for the bridge's runtime packages. Use bounded versions for production stability, and test thoroughly before upgrading foundational packages (like `discord.py` or `requests`). Contributors should install these packages into a repository-local `.venv`.
 * **Adding New Libraries**: Before adding new third-party dependencies, evaluate them for necessity, bloat, and security. Standard library solutions are preferred for simple tasks.
-* **Tooling**: We recommend using `black` (with a standard line length of 88 or 100) for auto-formatting, `isort` (configured with `--profile black`) for import sorting, `flake8` for linting, and `mypy` for static type checking. Consider using `pre-commit` hooks to enforce these automatically before changes are pushed.
+* **Tooling**: Use Pyright as the canonical Python type checker; VSCode Pylance uses the same type-checking engine. The checked-in `pyrightconfig.json` is authoritative for included files, Python 3.9 compatibility, and the basic checking baseline. Use `black` (with a standard line length of 88 or 100) for auto-formatting, `isort` (configured with `--profile black`) for import sorting, and `pytest` for tests. Mypy is optional unless its configuration and dependency stubs are added; do not describe it as an enforced check without a reproducible config.
+* **Editor environment**: Configure VSCode to use the repository-local `.venv` and install `requirements.txt`. Missing-import diagnostics indicate an interpreter/environment problem and must not be silenced globally. Reload Pylance after changing interpreters or dependencies.
+* **Boundary typing**: Treat JSON, HTTP, and Discord payloads as untrusted at their boundaries. Narrow values with `isinstance` checks before conversion or collection insertion. For objects initialized during `setup_hook`, assert or otherwise narrow optional lifecycle fields before using them; do not hide these diagnostics with blanket type ignores.
 
 ## 3. Batch Script Standards (`.bat`)
 
@@ -111,7 +113,7 @@ If your contributions extend into the `LzyDownloader.exe` C++ backend:
 * **Edge Cases**: Always test edge cases, such as invalid URLs, network timeouts, or the C++ server being forcefully closed during a download.
 * **Automated Testing**: As the project scales, prefer writing unit tests (e.g., using `pytest`) for pure logic modules (like URL validation, URL expansion mapping, and JSON backup parsing) to prevent regressions.
 * **Test Isolation & Mocking**: All automated tests must run in total isolation. External network requests, file-system I/O for system directories, and subprocess spawns must be mocked (e.g., using `unittest.mock` or `pytest-mock`) to avoid side effects and allow tests to run offline or in CI/CD environments.
-* **Continuous Integration (CI)**: Ensure that your code passes all automated linting (`flake8`, `black`, `isort`) and static type checks (`mypy`) before submitting a PR.
+* **Continuous Integration (CI)**: Ensure that your code passes all automated linting (`flake8`, `black`, `isort`) and Pyright before submitting a PR. Run Pyright with the repository's `pyrightconfig.json` so local editor diagnostics and CI use the same scope and Python-version target.
 
 ## 7. Security & Community
 

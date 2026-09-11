@@ -1,0 +1,18 @@
+{
+  "include": [
+    "lzy_downloader_discord_bridge.py",
+    "tests"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".test-*",
+    "pytest-cache-files-*",
+    ".venv",
+    "venv",
+    "env",
+    "ENV"
+  ],
+  "pythonVersion": "3.9",
+  "typeCheckingMode": "basic",
+  "reportMissingTypeStubs": "none"
+}

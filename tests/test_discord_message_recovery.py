@@ -6,6 +6,7 @@ import unittest
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
@@ -102,7 +103,7 @@ class DiscordMessageRecoveryTests(unittest.TestCase):
             "options": {"initial_title": "Example title"},
         }
         bot = bridge.LzyBot()
-        bot._connection.user = SimpleNamespace(id=99)
+        cast(Any, bot._connection).user = SimpleNamespace(id=99)
 
         state_path = self.temporary_state_path()
         try:
@@ -110,7 +111,10 @@ class DiscordMessageRecoveryTests(unittest.TestCase):
                 bridge, "get_discord_message_state_path", return_value=str(state_path)
             ):
                 found = asyncio.run(
-                    bot.find_recovery_messages(FakeChannel(messages), [item])
+                    bot.find_recovery_messages(
+                        cast(bridge.discord.abc.Messageable, FakeChannel(messages)),
+                        [item],
+                    )
                 )
         finally:
             state_path.unlink(missing_ok=True)
@@ -158,13 +162,16 @@ class DiscordMessageRecoveryTests(unittest.TestCase):
 
         response = asyncio.run(
             bot.handle_webhook(
-                FakeWebhookRequest(
-                    {
-                        "job_id": job_id,
-                        "url": url,
-                        "status": "failed",
-                        "error": "Another download request is already being processed.",
-                    }
+                cast(
+                    bridge.web.Request,
+                    FakeWebhookRequest(
+                        {
+                            "job_id": job_id,
+                            "url": url,
+                            "status": "failed",
+                            "error": "Another download request is already being processed.",
+                        }
+                    ),
                 )
             )
         )
@@ -186,8 +193,11 @@ class DiscordMessageRecoveryTests(unittest.TestCase):
         for status in ("Complete", "Applying metadata..."):
             response = asyncio.run(
                 bot.handle_webhook(
-                    FakeWebhookRequest(
-                        {"job_id": job_id, "url": url, "status": status}
+                    cast(
+                        bridge.web.Request,
+                        FakeWebhookRequest(
+                            {"job_id": job_id, "url": url, "status": status}
+                        ),
                     )
                 )
             )
@@ -196,13 +206,16 @@ class DiscordMessageRecoveryTests(unittest.TestCase):
 
         response = asyncio.run(
             bot.handle_webhook(
-                FakeWebhookRequest(
-                    {
-                        "job_id": job_id,
-                        "url": url,
-                        "status": "Completed",
-                        "progress": 100,
-                    }
+                cast(
+                    bridge.web.Request,
+                    FakeWebhookRequest(
+                        {
+                            "job_id": job_id,
+                            "url": url,
+                            "status": "Completed",
+                            "progress": 100,
+                        }
+                    ),
                 )
             )
         )

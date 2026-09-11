@@ -57,7 +57,6 @@ class TimestampedRotatingFileHandler(RotatingFileHandler):
     def doRollover(self) -> None:
         if self.stream:
             self.stream.close()
-            self.stream = None
 
         timestamp = time.strftime('%Y-%m-%d_%H-%M-%S')
         archive_path = os.path.join(script_dir, f'bot_{timestamp}.log')
@@ -536,16 +535,25 @@ class LzyBot(discord.Client):
                 for reference in saved_references:
                     if not isinstance(reference, dict):
                         continue
+                    channel_value = reference.get("channel_id")
+                    message_value = reference.get("message_id")
+                    if not isinstance(channel_value, (str, int)) or not isinstance(
+                        message_value, (str, int)
+                    ):
+                        continue
                     try:
-                        channel_id = int(reference.get("channel_id"))
-                        message_id = int(reference.get("message_id"))
+                        channel_id = int(channel_value)
+                        message_id = int(message_value)
                     except (TypeError, ValueError):
                         continue
                     message = history_by_id.get(message_id)
                     saved_channel = channel_cache.get(channel_id)
                     if saved_channel is None:
                         try:
-                            saved_channel = await self.fetch_channel(channel_id)
+                            fetched_channel = await self.fetch_channel(channel_id)
+                            if not isinstance(fetched_channel, discord.abc.Messageable):
+                                continue
+                            saved_channel = fetched_channel
                             channel_cache[channel_id] = saved_channel
                         except Exception as error:
                             logger.info(
@@ -568,7 +576,7 @@ class LzyBot(discord.Client):
 
             for message in history:
                 message_id = getattr(message, "id", None)
-                if message_id in used_message_ids:
+                if not isinstance(message_id, int) or message_id in used_message_ids:
                     continue
                 exact_url = bool(url and url in str(getattr(message, "content", "") or ""))
                 title_match = any(
@@ -877,6 +885,7 @@ async def downloads(interaction: discord.Interaction) -> None:
 
 @client.tree.command(name="cancel", description="Cancel an active download")
 @app_commands.describe(job_id="The job ID from /downloads")
+@app_commands.autocomplete(job_id=cancel_job_autocomplete)
 async def cancel(interaction: discord.Interaction, job_id: str) -> None:
     if str(interaction.user.id) != AUTHORIZED_USER_ID:
         await interaction.response.send_message(UNAUTHORIZED_MESSAGE, ephemeral=True)
@@ -896,9 +905,6 @@ async def cancel(interaction: discord.Interaction, job_id: str) -> None:
             redact_absolute_paths(message)
         ).replace("|", "\\|")
         await interaction.followup.send(f"❌ {safe_message}", ephemeral=True)
-
-
-cancel.autocomplete("job_id")(cancel_job_autocomplete)
 
 @client.tree.command(name="audio", description="Start a new audio-only download")
 @app_commands.describe(url="The URL of the media to download as audio")
@@ -1568,6 +1574,7 @@ async def register_active_job(
     client.active_jobs[job_key] = build_active_job_data(url)
     if status_messages:
         remember_discord_messages(job_key, url, download_type, status_messages)
+    assert client.jobs_lock is not None
     async with client.jobs_lock:
         client.active_job_count += 1
     return True
@@ -1579,6 +1586,7 @@ async def unregister_active_job(job_key: str) -> None:
         del client.active_jobs[job_key]
     forget_discord_messages(job_key)
 
+    assert client.jobs_lock is not None
     async with client.jobs_lock:
         client.active_job_count = max(0, client.active_job_count - 1)
 
@@ -1588,6 +1596,7 @@ async def resume_backed_up_downloads_on_startup(
     user: Any = None
 ) -> None:
     """Resumes tracking of backed up downloads or retries failed ones."""
+    assert client.recovery_lock is not None
     async with client.recovery_lock:
         if not force and client.startup_resume_started:
             return
@@ -1789,6 +1798,7 @@ async def run_download_job(
             job_key, url, download_type, status_messages
         )
         job_registered = True
+    assert client.launch_lock is not None
     async with client.launch_lock:
         try:
             # Ensure the API is running before we queue
@@ -1887,7 +1897,9 @@ async def run_download_job(
             await edit_msg("❌ Missing job_id for resumed download.")
             return
         job_key = str(job_id)
-        
+
+    assert job_key is not None
+
     try:
         while job_key in client.active_jobs:
             current_data = client.active_jobs[job_key]
@@ -1929,9 +1941,10 @@ async def run_download_job(
                 continue
                 
             raw_status = str(current_data["status_text"])
-            if current_data.get("queue_position") is not None and current_data.get("queue_position") > 0:
+            queue_position = current_data.get("queue_position")
+            if isinstance(queue_position, (int, float)) and queue_position > 0:
                 raw_status = QUEUE_POSITION_REGEX.sub("", raw_status)
-                raw_status += f" (Position: {current_data['queue_position']})"
+                raw_status += f" (Position: {queue_position})"
             if len(raw_status) > 200:
                 raw_status = raw_status[:197] + "..."
             status_text = discord.utils.escape_markdown(raw_status).replace("|", "\\|")

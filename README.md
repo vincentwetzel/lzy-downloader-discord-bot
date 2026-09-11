@@ -87,9 +87,12 @@ users receive setup instructions instead of a silent response.
 
 ## Installation
 1. Clone this repository.
-2. Install the required Python packages:
+2. Create and activate a repository-local virtual environment, then install the required Python packages:
    ```bash
-   pip install discord.py aiohttp python-dotenv requests
+   python -m venv .venv
+   # Windows: .venv\\Scripts\\activate
+   # Linux/macOS: source .venv/bin/activate
+   python -m pip install -r requirements.txt
    ```
 3. Copy `.env.example` to `.env` in the root of the project, then fill in your Discord bot token, authorized user ID, and LzyDownloader executable path:
    ```env
@@ -99,6 +102,8 @@ users receive setup instructions instead of a silent response.
    ```
 4. To get your Discord user ID, enable Developer Mode in Discord (`Settings > Advanced > Developer Mode`), then right-click your profile and select **Copy User ID**.
 5. In the Discord Developer Portal, enable the **Message Content Intent** for the bot if you want direct-message URL downloads.
+
+For local type checking, keep the `.venv` selected as the VSCode Python interpreter and run `pyright`. The repository's `pyrightconfig.json` is also used by Pylance and targets Python 3.9 for cross-platform compatibility.
 
 ## Usage
 Run the bot via the command line:
