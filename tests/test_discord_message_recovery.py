@@ -177,6 +177,40 @@ class DiscordMessageRecoveryTests(unittest.TestCase):
             "Another download request is already being processed.",
         )
 
+    def test_stream_complete_does_not_close_job_before_finalization(self):
+        bot = bridge.LzyBot()
+        job_id = "post-processing-job"
+        url = "https://example.test/video"
+        bot.active_jobs[job_id] = bridge.build_active_job_data(url)
+
+        for status in ("Complete", "Applying metadata..."):
+            response = asyncio.run(
+                bot.handle_webhook(
+                    FakeWebhookRequest(
+                        {"job_id": job_id, "url": url, "status": status}
+                    )
+                )
+            )
+            self.assertEqual(response.status, 200)
+            self.assertFalse(bot.active_jobs[job_id]["is_final"])
+
+        response = asyncio.run(
+            bot.handle_webhook(
+                FakeWebhookRequest(
+                    {
+                        "job_id": job_id,
+                        "url": url,
+                        "status": "Completed",
+                        "progress": 100,
+                    }
+                )
+            )
+        )
+
+        self.assertEqual(response.status, 200)
+        self.assertTrue(bot.active_jobs[job_id]["is_final"])
+        self.assertEqual(bot.active_jobs[job_id]["final_status"], "completed")
+
     def test_secondary_server_exit_waits_for_existing_api(self):
         process = Mock()
         process.poll.return_value = 0

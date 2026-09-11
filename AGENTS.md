@@ -18,7 +18,7 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
     platform data root: `%LOCALAPPDATA%` on Windows, XDG data or
     `~/.local/share` on Linux, and `~/Library/Application Support` on macOS.
   - Hosts an asynchronous webhook listener (`aiohttp`) to receive push updates from the C++ app.
-  - Formats webhook JSON payloads into compact Unicode progress bars, displays real-time queue positions, and updates Discord messages with a debounce mechanism.
+  - Formats webhook JSON payloads into compact Unicode progress bars, displays real-time queue positions, and updates Discord messages with a debounce mechanism. The C++ worker's intermediate `Complete` update is not terminal; the bridge waits for the manager's `Completed` event after post-processing and final-file movement.
   - Uses the C++ `overall_progress` webhook field for multi-stream jobs so Discord percentages remain monotonic across video/audio stream handoff.
   - Treats terminal webhook state as monotonic, ignoring late non-terminal progress events that were posted before completion but arrive afterward.
   - Tracks active download jobs and updates the original message with a final status when individual downloads complete.

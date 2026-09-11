@@ -45,6 +45,10 @@ changes documented in this repository.
 
 ### Fixed
 
+- **Premature completion reporting:** The bridge no longer treats the C++
+  worker's intermediate `Complete` progress update as terminal, so downloads
+  remain tracked through metadata, verification, sorting, and final-file
+  movement until the manager emits `Completed`.
 - **Pending enqueue handling:** Discord jobs rejected while the shared
   coordinator is already validating another request now receive the terminal
   failure webhook instead of remaining tracked until the timeout.

@@ -88,7 +88,7 @@ under their own service or process supervisor.
 - Multi-stream webhook payloads may include `overall_progress` as a finite percentage from 0 through 100; the bridge uses that field for active Discord rendering because the ordinary `progress` field is scoped to the currently transferring stream and can reset at video/audio handoff. Regressive aggregate updates are ignored while the job remains active, while terminal updates may set the final raw progress value.
 - Terminal webhook state is monotonic. Because the C++ client posts webhook requests asynchronously, a progress request queued before completion may arrive afterward; once a terminal state is observed, the bridge ignores subsequent non-terminal updates so Discord cannot regress to an earlier progress message.
 - The bridge registers a UUID locally before sending `/enqueue`. If the API returns a different ID, the temporary registration is replaced with the server ID; if the API rejects the request before returning a response, the caller ID remains available for matching the terminal webhook.
-- The bridge treats `completed`, `complete`, `finished`, `failed`, `stopped`, `error`, `cancelled`, and `canceled` as terminal statuses. A webhook `error` value is retained and included in the final Discord diagnostic after markdown escaping and length limiting.
+- The bridge treats `completed`, `failed`, `stopped`, `error`, `cancelled`, and `canceled` as terminal webhook statuses. The C++ worker's intermediate `complete` status only means yt-dlp finished its stream work; metadata, verification, sorting, and final-file movement may still be pending. A webhook `error` value is retained and included in the final Discord diagnostic after markdown escaping and length limiting.
 
 ### Request examples
 

@@ -150,8 +150,11 @@ YOUTUBE_ID_REGEX = re.compile(r"(?:youtu\.be/|v=|/shorts/|/live/)([0-9A-Za-z_-]{
 NORMALIZE_URL_REGEX = re.compile(r"^https?://(www\.)?")
 QUEUE_POSITION_REGEX = re.compile(r"\s*\(Position:?\s*\d+\)", re.IGNORECASE)
 TERMINAL_WEBHOOK_STATUSES = frozenset({
-    "completed", "complete", "failed", "stopped", "cancelled", "canceled",
-    "finished", "error",
+    # The C++ worker reports "Complete" when yt-dlp has finished its stream
+    # work, but finalization (metadata, verification, sorting, and moving) is
+    # still pending.  Only the manager's "Completed" event is terminal for a
+    # webhook job.
+    "completed", "failed", "stopped", "cancelled", "canceled", "error",
 })
 RECOVERY_MESSAGE_PREFIXES = (
     "⏳ **Downloading:**",
