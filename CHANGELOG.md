@@ -45,6 +45,11 @@ changes documented in this repository.
 
 ### Fixed
 
+- **Reconnect progress recovery:** A successful Discord Gateway reconnect now
+  clears the recovery watchdog instead of allowing a stale sleep/wake timer to
+  shut down the healthy bridge. Startup webhook events are buffered until
+  recovery registration completes, and persisted Discord messages can be
+  matched when the backup uses an expanded child job ID.
 - **Premature completion reporting:** The bridge no longer treats the C++
   worker's intermediate `Complete` progress update as terminal, so downloads
   remain tracked through metadata, verification, sorting, and final-file

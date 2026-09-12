@@ -140,6 +140,7 @@ DEFAULT_API_PORT: int = 8765
 BACKUP_ARCHIVE_RETENTION: int = 2
 DISCORD_MESSAGE_HISTORY_LIMIT: int = 100
 DISCORD_MESSAGE_STATE_FILENAME: str = "discord_message_state.json"
+PENDING_WEBHOOK_LIMIT: int = 256
 
 # Load from .env
 LZY_EXECUTABLE_PATH: Optional[str] = os.getenv('LZY_EXECUTABLE_PATH')
@@ -311,6 +312,8 @@ class LzyBot(discord.Client):
         self.gateway_disconnect_event: Optional[asyncio.Event] = None
         self.gateway_watchdog_task: Optional[asyncio.Task] = None
         self.closing: bool = False
+        self.startup_recovery_complete: bool = False
+        self.pending_webhooks: Dict[str, Dict[str, Any]] = {}
 
     async def setup_hook(self) -> None:
         # Initialize locks within the active event loop
@@ -364,6 +367,11 @@ class LzyBot(discord.Client):
         except Exception as e:
             print(f"[Webhook ERROR] Failed to parse JSON: {e}")
             return web.Response(status=400, text="Invalid JSON")
+
+        return self._apply_webhook_data(data)
+
+    def _apply_webhook_data(self, data: Dict[str, Any]) -> web.Response:
+        """Applies one webhook payload, buffering startup events if necessary."""
             
         # Catch multiple common casing formats just in case
         job_key = data.get("job_id") or data.get("id") or data.get("jobId") or data.get("lzy_id")
@@ -411,6 +419,15 @@ class LzyBot(discord.Client):
                 print(f"[Webhook] Routing child ID {job_key} updates to parent job {found_key}")
                 job_key = found_key
             else:
+                if not self.startup_recovery_complete:
+                    if len(self.pending_webhooks) >= PENDING_WEBHOOK_LIMIT:
+                        self.pending_webhooks.pop(next(iter(self.pending_webhooks)))
+                    self.pending_webhooks[job_key] = data
+                    logger.info(
+                        "Deferring webhook for untracked startup job %s until recovery finishes.",
+                        job_key,
+                    )
+                    return web.Response(status=202, text="Webhook queued for startup recovery")
                 print(f"[Webhook ERROR] Rejected payload: Job {job_key} not tracked by bridge.")
                 return web.Response(status=404, text="Job not tracked by bridge")
 
@@ -529,8 +546,23 @@ class LzyBot(discord.Client):
             )
             matches: List[discord.Message] = []
 
-            saved_entry = state.get(job_id, {})
-            saved_references = saved_entry.get("messages", [])
+            saved_entry = state.get(job_id)
+            if not isinstance(saved_entry, dict):
+                download_type = get_backup_item_download_type(item)
+                candidates = [
+                    entry for entry in state.values()
+                    if isinstance(entry, dict)
+                    and download_identity(str(entry.get("url", "")))
+                    == download_identity(url)
+                    and str(entry.get("download_type") or "video")
+                    == download_type
+                ]
+                saved_entry = candidates[0] if len(candidates) == 1 else {}
+
+            saved_references = (
+                saved_entry.get("messages", [])
+                if isinstance(saved_entry, dict) else []
+            )
             if isinstance(saved_references, list):
                 for reference in saved_references:
                     if not isinstance(reference, dict):
@@ -600,9 +632,19 @@ class LzyBot(discord.Client):
         return result
 
     async def on_ready(self) -> None:
+        self._mark_gateway_connected()
         print(f"Discord connection ready as {self.user}.")
         # Arm recovery tracking before missed-DM tasks can launch the worker.
-        await resume_backed_up_downloads_on_startup()
+        try:
+            await resume_backed_up_downloads_on_startup()
+        except Exception:
+            logger.exception("Startup download recovery failed.")
+        finally:
+            self.startup_recovery_complete = True
+            pending_webhooks = self.pending_webhooks
+            self.pending_webhooks = {}
+            for payload in pending_webhooks.values():
+                self._apply_webhook_data(payload)
 
         if AUTHORIZED_USER_ID:
             try:
@@ -669,10 +711,14 @@ class LzyBot(discord.Client):
 
     async def on_resumed(self) -> None:
         """Logs successful gateway recovery after a network interruption or wake."""
+        self._mark_gateway_connected()
+        print("Discord gateway session resumed after interruption.")
+
+    def _mark_gateway_connected(self) -> None:
+        """Clears watchdog state whenever Discord has established a session."""
         self.gateway_disconnect_started_at = None
         if self.gateway_disconnect_event is not None:
             self.gateway_disconnect_event.clear()
-        print("Discord gateway session resumed after interruption.")
 
     async def on_disconnect(self) -> None:
         """Logs gateway loss; discord.py will attempt its built-in reconnect."""
@@ -1216,10 +1262,59 @@ def forget_discord_messages(job_id: str) -> None:
     save_discord_message_state(state)
 
 
-def prune_discord_message_state(job_ids: Set[str]) -> None:
-    """Drops references for jobs no longer present in backend recovery state."""
+def backup_item_job_ids(item: Dict[str, Any]) -> Set[str]:
+    """Returns all backend and placeholder IDs that can represent one item."""
+    identifiers: Set[str] = set()
+    for container in (item, item.get("options"), item.get("metadata")):
+        if not isinstance(container, dict):
+            continue
+        for key in ("job_id", "id", "jobId", "lzy_id", "playlist_placeholder_id"):
+            value = str(container.get(key) or "").strip()
+            if value:
+                identifiers.add(value)
+    return identifiers
+
+
+def prune_discord_message_state(backup_items: Any) -> None:
+    """Drops references absent from recovery state, including expanded IDs.
+
+    A Discord request can be stored under its placeholder ID while the
+    coordinator backup stores the expanded child ID.  URL identity is the
+    stable fallback that keeps that message mapping recoverable across a
+    bridge restart.
+    """
     state = load_discord_message_state()
-    retained = {job_id: entry for job_id, entry in state.items() if job_id in job_ids}
+    if isinstance(backup_items, set):
+        backup_ids = {str(job_id) for job_id in backup_items}
+        backup_keys: Set[Tuple[str, str]] = set()
+    else:
+        items = [item for item in backup_items if isinstance(item, dict)]
+        backup_ids = {
+            job_id
+            for item in items
+            for job_id in backup_item_job_ids(item)
+        }
+        backup_keys = {
+            (
+                download_identity(str(item.get("url", ""))),
+                get_backup_item_download_type(item),
+            )
+            for item in items
+            if item.get("url")
+        }
+
+    retained = {}
+    for job_id, entry in state.items():
+        if job_id in backup_ids:
+            retained[job_id] = entry
+            continue
+        if isinstance(entry, dict):
+            state_key = (
+                download_identity(str(entry.get("url", ""))),
+                str(entry.get("download_type") or "video"),
+            )
+            if state_key in backup_keys:
+                retained[job_id] = entry
     if retained != state:
         save_discord_message_state(retained)
 
@@ -1604,12 +1699,7 @@ async def resume_backed_up_downloads_on_startup(
             client.startup_resume_started = True
 
         items = await asyncio.to_thread(load_download_backup_items)
-        backup_job_ids = {
-            str(item.get("job_id") or item.get("id") or item.get("jobId")
-                or item.get("lzy_id") or "")
-            for item in items
-        }
-        await asyncio.to_thread(prune_discord_message_state, backup_job_ids)
+        await asyncio.to_thread(prune_discord_message_state, items)
         if not items:
             return
 

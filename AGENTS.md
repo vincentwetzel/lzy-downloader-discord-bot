@@ -26,6 +26,7 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
   - Generates and registers a UUID before each new enqueue request, passing it as both `job_id` and `id` so asynchronous backend validation failures remain associated with the originating Discord message.
   - Pre-registers caller-supplied job IDs before enqueueing so asynchronous validation failures can be matched, reported, and removed immediately.
   - Pre-registers all queued recovery jobs before launching the C++ worker so startup webhook events cannot arrive before bridge tracking exists.
+  - Buffers bounded webhook events received while startup recovery is registering jobs, then replays them after recovery; persisted message state also matches expanded child IDs by normalized URL and download type.
   - Persists active job Discord message references with atomic state-file replacement and reconnects those messages after a bridge restart; missing or corrupt state is recoverable, while legacy progress messages are migrated from at most 100 recent DM messages when their URL or unique backed-up title identifies them.
   - Sanitizes dynamic webhook text (like titles and status updates) to prevent accidental Discord markdown rendering, and redacts Windows, POSIX, and local file-URI paths before diagnostic text is sent to Discord.
   - Reads the coordinator-owned `downloads_backup.json` from the platform data
@@ -34,6 +35,7 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
   - Uses extractor-independent URL identity normalization to avoid re-queueing equivalent recovery entries or offline DM requests that differ only by tracking/share parameters.
   - Includes backend `error` diagnostics in terminal Discord messages when supplied by a webhook.
   - Archives previous backup files before recovery cleanup so recovery state is not discarded silently.
+  - Clears the Gateway recovery watchdog from `on_ready` and `on_resumed` so a successful reconnect is not mistaken for a prolonged outage.
   - Uses a local single-instance lock so only one bridge process runs at a time.
   - Reloads `.env` immediately before launching the worker, allowing an updated `LZY_EXECUTABLE_PATH` to be used without restarting the bridge.
   - Writes bridge, library, exception, and incoming webhook diagnostics to `bot.log`; log files may contain URLs, titles, backend errors, and local diagnostic details and must be treated as sensitive local data. Resolved local paths must not be included in Discord-facing messages.

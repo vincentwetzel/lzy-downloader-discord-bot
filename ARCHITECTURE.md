@@ -24,7 +24,7 @@ under their own service or process supervisor.
 - **Framework:** `discord.py`
 - **Entrypoint:** `lzy_downloader_discord_bridge.py`
 - **Windows launchers:** `start_lzy_downloader_discord_bridge.bat` and `stop_lzy_downloader_discord_bridge.bat`
-- **Windows supervision:** The start launcher hands the supervisor loop to a minimized detached command child, then returns immediately. The bridge exits after prolonged Discord Gateway loss so the supervisor can restart it after sleep/wake failures. The launcher prevents duplicate supervisor loops, and both `/stop` and the stop launcher write a marker to prevent an intentional shutdown from being restarted.
+- **Windows supervision:** The start launcher hands the supervisor loop to a minimized detached command child, then returns immediately. The bridge exits after prolonged Discord Gateway loss so the supervisor can restart it after sleep/wake failures; `on_ready` and `on_resumed` clear the watchdog after a successful reconnect. The launcher prevents duplicate supervisor loops, and both `/stop` and the stop launcher write a marker to prevent an intentional shutdown from being restarted.
 - **Responsibilities:**
   - Handles `/download`, `/audio`, `/downloads`, `/cancel`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop` slash commands.
   - Accepts authorized direct-message URLs as standard video downloads.
@@ -33,7 +33,7 @@ under their own service or process supervisor.
   - Makes `/help` public and includes links for users who want to install LzyDownloader and run their own bridge; the authorized owner's online notification does not repeat those instructions.
   - Explains the same self-hosting setup when an unauthorized user invokes a restricted command or sends a direct message.
   - Attaches to the C++ coordinator when the local API is unavailable. It does not terminate the coordinator on bridge shutdown because it may also own the visible GUI.
-  - Hosts a local webhook server (`127.0.0.1:8766`) to receive instant, event-driven progress updates from the C++ app.
+  - Hosts a local webhook server (`127.0.0.1:8766`) to receive instant, event-driven progress updates from the C++ app. During startup recovery, unknown webhook payloads are bounded in memory and replayed after recovered jobs are registered, preventing a server-startup race from dropping progress events.
   - **Strictly Event-Driven:** Polling the local API (e.g., `GET /status`) for live progress updates is explicitly forbidden. All state tracking must rely solely on the push updates provided by the webhook server.
   - Tracks active download jobs so the user receives completion and queue-empty notifications.
   - Prevents duplicate bot processes by binding a local single-instance lock socket.

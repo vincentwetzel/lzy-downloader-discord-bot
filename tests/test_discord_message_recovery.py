@@ -122,6 +122,97 @@ class DiscordMessageRecoveryTests(unittest.TestCase):
 
         self.assertEqual([message.id for message in found[0]], [2, 3])
 
+    def test_recovery_matches_saved_parent_state_to_child_backup_id(self):
+        message = FakeMessage(12, "⏳ **Downloading:** **Example title**")
+        item = {
+            "id": "child-job",
+            "url": "https://example.test/video?utm_source=discord",
+            "options": {"download_type": "video", "initial_title": "Example title"},
+        }
+        state_path = self.temporary_state_path()
+        try:
+            with patch.object(
+                bridge, "get_discord_message_state_path", return_value=str(state_path)
+            ):
+                bridge.remember_discord_messages(
+                    "parent-job",
+                    "https://example.test/video",
+                    "video",
+                    [message],
+                )
+                bot = bridge.LzyBot()
+                cast(Any, bot._connection).user = SimpleNamespace(id=99)
+                found = asyncio.run(
+                    bot.find_recovery_messages(
+                        cast(bridge.discord.abc.Messageable, FakeChannel([message])),
+                        [item],
+                    )
+                )
+        finally:
+            state_path.unlink(missing_ok=True)
+            Path(str(state_path) + ".tmp").unlink(missing_ok=True)
+
+        self.assertEqual([found_message.id for found_message in found[0]], [12])
+
+    def test_prune_retains_parent_state_for_child_backup_id(self):
+        message = FakeMessage(13, "⏳ **Downloading:** **Example title**")
+        item = {
+            "id": "child-job",
+            "url": "https://example.test/video",
+            "options": {"download_type": "video"},
+        }
+        state_path = self.temporary_state_path()
+        try:
+            with patch.object(
+                bridge, "get_discord_message_state_path", return_value=str(state_path)
+            ):
+                bridge.remember_discord_messages(
+                    "parent-job", item["url"], "video", [message]
+                )
+                bridge.prune_discord_message_state([item])
+                state = bridge.load_discord_message_state()
+        finally:
+            state_path.unlink(missing_ok=True)
+            Path(str(state_path) + ".tmp").unlink(missing_ok=True)
+
+        self.assertIn("parent-job", state)
+
+    def test_startup_webhook_is_buffered_until_recovery_registration(self):
+        bot = bridge.LzyBot()
+        parent_id = "parent-job"
+        payload = {
+            "job_id": "child-job",
+            "parent_id": parent_id,
+            "url": "https://example.test/video",
+            "status": "Downloading",
+            "progress": 42,
+        }
+
+        response = asyncio.run(
+            bot.handle_webhook(
+                cast(bridge.web.Request, FakeWebhookRequest(payload))
+            )
+        )
+        self.assertEqual(response.status, 202)
+        self.assertIn("child-job", bot.pending_webhooks)
+
+        bot.active_jobs[parent_id] = bridge.build_active_job_data(payload["url"])
+        bot.startup_recovery_complete = True
+        bot._apply_webhook_data(bot.pending_webhooks.pop("child-job"))
+
+        self.assertEqual(bot.active_jobs[parent_id]["progress"], 42)
+
+    def test_gateway_connection_clears_recovery_watchdog(self):
+        bot = bridge.LzyBot()
+        bot.gateway_disconnect_started_at = 123.0
+        bot.gateway_disconnect_event = asyncio.Event()
+        bot.gateway_disconnect_event.set()
+
+        bot._mark_gateway_connected()
+
+        self.assertIsNone(bot.gateway_disconnect_started_at)
+        self.assertFalse(bot.gateway_disconnect_event.is_set())
+
     def test_queue_backup_uses_shared_coordinator_directory(self):
         with patch.object(bridge, "get_lzy_data_dir", return_value="/shared/LzyDownloader"):
             self.assertEqual(
