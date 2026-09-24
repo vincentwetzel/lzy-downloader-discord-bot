@@ -315,6 +315,49 @@ class DiscordMessageRecoveryTests(unittest.TestCase):
         self.assertTrue(bot.active_jobs[job_id]["is_final"])
         self.assertEqual(bot.active_jobs[job_id]["final_status"], "completed")
 
+    def test_retry_child_reopens_parent_after_old_terminal_event(self):
+        bot = bridge.LzyBot()
+        parent_id = "retry-parent"
+        url = "https://x.com/example/status/123"
+        bot.active_jobs[parent_id] = bridge.build_active_job_data(url)
+
+        old_terminal = bot._apply_webhook_data(
+            {
+                "job_id": "old-child",
+                "parent_id": parent_id,
+                "url": url,
+                "status": "Cancelled",
+                "progress": 0,
+            }
+        )
+        self.assertEqual(old_terminal.status, 200)
+        self.assertTrue(bot.active_jobs[parent_id]["is_final"])
+
+        replacement = bot._apply_webhook_data(
+            {
+                "job_id": "replacement-child",
+                "parent_id": parent_id,
+                "url": url,
+                "status": "Queued",
+                "progress": 0,
+            }
+        )
+        self.assertEqual(replacement.status, 200)
+        self.assertFalse(bot.active_jobs[parent_id]["is_final"])
+        self.assertEqual(bot.active_jobs[parent_id]["status_text"], "Queued")
+
+        late_old_progress = bot._apply_webhook_data(
+            {
+                "job_id": "old-child",
+                "parent_id": parent_id,
+                "url": url,
+                "status": "Downloading",
+                "progress": 42,
+            }
+        )
+        self.assertEqual(late_old_progress.status, 200)
+        self.assertEqual(bot.active_jobs[parent_id]["progress"], 0)
+
     def test_secondary_server_exit_waits_for_existing_api(self):
         process = Mock()
         process.poll.return_value = 0

@@ -20,7 +20,7 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
   - Hosts an asynchronous webhook listener (`aiohttp`) to receive push updates from the C++ app.
   - Formats webhook JSON payloads into compact Unicode progress bars, displays real-time queue positions, and updates Discord messages with a debounce mechanism. The C++ worker's intermediate `Complete` update is not terminal; the bridge waits for the manager's `Completed` event after post-processing and final-file movement.
   - Uses the C++ `overall_progress` webhook field for multi-stream jobs so Discord percentages remain monotonic across video/audio stream handoff.
-  - Treats terminal webhook state as monotonic, ignoring late non-terminal progress events that were posted before completion but arrive afterward.
+  - Treats terminal webhook state as monotonic, ignoring late non-terminal progress events from a completed child; a previously unseen child UUID for the same tracked parent reopens that parent for a retry or explicit re-download.
   - Tracks active download jobs and updates the original message with a final status when individual downloads complete.
   - Sends authenticated cancellation requests for active job IDs and recognizes `Cancelled`/`Canceled` webhook states as terminal.
   - Generates and registers a UUID before each new enqueue request, passing it as both `job_id` and `id` so asynchronous backend validation failures remain associated with the originating Discord message.
@@ -78,3 +78,19 @@ All code modifying or interacting with these agents must strictly adhere to the 
 Documentation must remain synchronized across this file, `README.md`,
 `ARCHITECTURE.md`, and `CHANGELOG.md` whenever command behavior, lifecycle,
 local API usage, recovery behavior, or runtime files change.
+
+## Testing and handoff
+
+- Run `python -m pytest -q tests -p no:cacheprovider` for bridge changes. Keep tests isolated from real
+  Discord credentials, user data, local API tokens, downloaded media, and
+  persistent platform data roots.
+- When a GitHub Actions or cross-repository test fails, reproduce the focused
+  failure locally before changing workflow configuration, then run the full
+  suite. Use native Windows for Windows-specific failures when available;
+  WSL/Linux is a valid portable Python/Qt fallback but cannot reproduce
+  Windows-specific loader or heap failures.
+- For changes crossing the desktop or browser boundary, the handoff must list
+  copy-pasteable commands for the bot tests, the main repository's focused and
+  full headless C++ tests, and the browser repository's `npm test`/native-host
+  smoke checks when applicable. State which platform-specific behavior still
+  requires verification and require an explicit passing result before push.

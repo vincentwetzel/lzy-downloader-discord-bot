@@ -6,6 +6,13 @@ changes documented in this repository.
 
 ## Unreleased
 
+### Validation
+
+- Documented the bridge test command and the focused-then-full validation
+  workflow across the Discord bot, desktop C++ application, and browser
+  companion repositories, including the native Windows versus WSL/Linux
+  limitations for Windows-specific loader and heap failures.
+
 ### Changed
 
 - **Self-hosting guidance:** Public `/help` and unauthorized slash commands
@@ -45,6 +52,9 @@ changes documented in this repository.
 
 ### Fixed
 
+- **Retry webhook correlation:** A retry that replaces a failed or cancelled
+  backend child job now reopens the original Discord parent message and tracks
+  the new child UUID, while late events from the old child remain ignored.
 - **Reconnect progress recovery:** A successful Discord Gateway reconnect now
   clears the recovery watchdog instead of allowing a stale sleep/wake timer to
   shut down the healthy bridge. Startup webhook events are buffered until

@@ -57,7 +57,7 @@ users receive setup instructions instead of a silent response.
 - **Backup Archiving:** Recovery and clear operations preserve old `downloads_backup.json` files as `.bak` archives and prune older bridge-created archives.
 - **Lifecycle Notifications:** Sends a DM to the authorized user when the bot connects to Discord and when it gracefully shuts down.
 - **Shared Preferences:** Downloads use the same LzyDownloader preferences configured in the GUI; the bridge does not maintain a separate settings file.
-- **Live Progress Bars:** Updates Discord messages with a compact Unicode progress bar, ETA, download speed, dynamic queue position, and status. For multi-stream downloads, the bridge prefers the C++ `overall_progress` field because ordinary `progress` is scoped to the current stream and can reset during video/audio handoff; stale lower aggregate updates are ignored while the job is active, and late non-terminal updates cannot overwrite an observed terminal state.
+- **Live Progress Bars:** Updates Discord messages with a compact Unicode progress bar, ETA, download speed, dynamic queue position, and status. For multi-stream downloads, the bridge prefers the C++ `overall_progress` field because ordinary `progress` is scoped to the current stream and can reset during video/audio handoff; stale lower aggregate updates are ignored while the job is active, late updates from a terminal child cannot overwrite its result, and a replacement child from a retry is correlated back to the same Discord message.
 - **Unsupported-link cleanup:** Generic non-interactive validation failures from LzyDownloader are delivered as terminal webhook errors, shown with the diagnostic in Discord, and removed from active bridge tracking immediately.
 - **Early Job Tracking:** Each enqueue request receives a bridge-generated job ID before the API call, so validation failures that arrive by webhook can still be matched to the original Discord message.
 - **Completion Status:** Updates the original Discord progress message with a final completion or failure status after the C++ manager finishes post-processing and final-file movement; yt-dlp's intermediate `Complete` progress update does not close the Discord job.
@@ -158,3 +158,27 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) for technical context on the local API s
 
 ## Development & Contributing
 When contributing to the codebase, keep Python code PEP 8 compliant and include type hints for function arguments and return types.
+
+### Validation
+
+Run the Discord bridge tests from this repository before pushing:
+
+```bash
+python -m pytest -q tests -p no:cacheprovider
+```
+
+For changes that touch the shared C++ Local API, coordinator lifecycle,
+webhook payloads, or browser-companion boundary, validate the matching
+repositories as well:
+
+1. Run the focused or cached C++ tests in the main LzyDownloader repository,
+   then its full `tests/run_headless_tests.py` suite. Prefer native Windows for
+   Windows workflow failures; WSL/Linux is a portable fallback but cannot
+   reproduce Windows-specific loader or heap failures.
+2. Run `npm test` and the native-host smoke harness in the browser-extension
+   repository when the browser boundary is affected.
+3. Use separate build directories for reruns and require `Result: PASS` from
+   the full C++ suite before pushing a cross-repository change.
+
+The Discord bridge's Python tests validate bridge behavior only; they do not
+replace the desktop Qt suite or the browser-companion smoke checks.

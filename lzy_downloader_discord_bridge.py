@@ -380,6 +380,7 @@ class LzyBot(discord.Client):
             return web.Response(status=400, text="Missing job_id in webhook payload")
         
         job_key = str(job_key)
+        source_job_key = job_key
         
         if job_key not in self.active_jobs:
             # The C++ app might have expanded a URL and changed the job ID (e.g., PlaylistExpander).
@@ -433,6 +434,16 @@ class LzyBot(discord.Client):
 
         job_data = self.active_jobs[job_key]
 
+        # A retry/re-download can replace a terminal child job while keeping
+        # the same Discord parent.  Remember which backend child produced a
+        # terminal event so that a new child UUID can revive the parent, while
+        # late progress from the old child remains ignored.
+        terminal_source_job_ids = job_data.setdefault(
+            "_terminal_source_job_ids", set()
+        )
+        if source_job_key in terminal_source_job_ids:
+            return web.Response(text="OK")
+
         # Webhooks are sent asynchronously by the C++ client.  A progress
         # request that was queued before the terminal request can therefore
         # arrive afterwards and regress a completed Discord message back to
@@ -441,7 +452,19 @@ class LzyBot(discord.Client):
         # been observed.
         incoming_status = str(data.get("status") or "").lower().strip()
         if job_data.get("is_final") and incoming_status not in TERMINAL_WEBHOOK_STATUSES:
-            return web.Response(text="OK")
+            # A different child ID for the same tracked parent is a retry or
+            # explicit re-download, not a late event from the child that just
+            # reached a terminal state.  Re-open the parent for that retry.
+            # The source-ID guard above preserves terminal monotonicity for
+            # delayed events from the old child.
+            logger.info(
+                "Reopening terminal Discord job %s for replacement child %s.",
+                job_key,
+                source_job_key,
+            )
+            job_data["is_final"] = False
+            job_data["final_status"] = ""
+            job_data["error"] = ""
         
         # Only update fields that are actually provided in this specific webhook payload
         if "status" in data and data["status"]:
@@ -493,6 +516,7 @@ class LzyBot(discord.Client):
         if current_status in TERMINAL_WEBHOOK_STATUSES:
             job_data["is_final"] = True
             job_data["final_status"] = current_status
+            terminal_source_job_ids.add(source_job_key)
 
         if data.get("error"):
             job_data["error"] = str(data["error"])
@@ -1651,6 +1675,7 @@ def build_active_job_data(url: str) -> Dict[str, Any]:
         "title": "",
         "is_final": False,
         "final_status": "",
+        "_terminal_source_job_ids": set(),
         "last_content": "",
         "last_webhook_time": time.time(),
     }
