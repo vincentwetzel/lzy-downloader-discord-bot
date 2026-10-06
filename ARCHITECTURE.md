@@ -27,8 +27,10 @@ under their own service or process supervisor.
 - **Windows supervision:** The start launcher hands the supervisor loop to a minimized detached command child, then returns immediately. The bridge exits after prolonged Discord Gateway loss so the supervisor can restart it after sleep/wake failures; `on_ready` and `on_resumed` clear the watchdog after a successful reconnect. The launcher prevents duplicate supervisor loops, and both `/stop` and the stop launcher write a marker to prevent an intentional shutdown from being restarted.
 - **Responsibilities:**
   - Handles `/download`, `/audio`, `/downloads`, `/cancel`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop` slash commands.
-  - Accepts authorized direct-message URLs as standard video downloads.
-  - Scans recent authorized DM history on startup for unacknowledged URL requests sent while the bot was offline.
+  - Accepts HTTP(S) links from authorized direct messages, including links
+    embedded in shared text or Markdown, as standard video downloads.
+  - Scans recent authorized DM history on startup for unacknowledged messages
+    containing an HTTP(S) link and queues the extracted target when offline.
   - Notifies the authorized user via DM when it successfully connects to Discord or gracefully shuts down; the online message is a concise status notification.
   - Makes `/help` public and includes links for users who want to install LzyDownloader and run their own bridge; the authorized owner's online notification does not repeat those instructions.
   - Explains the same self-hosting setup when an unauthorized user invokes a restricted command or sends a direct message.
@@ -48,7 +50,10 @@ under their own service or process supervisor.
 - **Environment Template:** `.env.example` documents the required bridge variables (`DISCORD_BOT_TOKEN`, `AUTHORIZED_USER_ID`, and `LZY_EXECUTABLE_PATH`) for local setup.
 
 ## Download Flow
-1. An authorized user sends `/download`, `/audio`, or a URL in DM. Active job IDs can be listed with `/downloads` and cancelled with `/cancel`; DMs also accept `cancel <job_id>`.
+1. An authorized user sends `/download`, `/audio`, or a URL or shared text
+   containing an HTTP(S) link in DM. Markdown link targets are preferred.
+   Active job IDs can be listed with `/downloads` and cancelled with `/cancel`;
+   DMs also accept `cancel <job_id>`.
 2. The bot validates the URL and checks whether the local API is already healthy.
 3. If needed, the bot launches LzyDownloader with `--server --exit-after`.
 4. The bot reads the local API token and sends `POST /enqueue` with the URL, download type, and an explicit `override_archive` confirmation for intentional bot requests.
@@ -61,7 +66,9 @@ under their own service or process supervisor.
 
 ## Offline DM Catch-Up
 - After Discord reports the bridge as ready, the bot sends the authorized user an online DM and reads the most recent DM messages.
-- Authorized HTTP/HTTPS URL messages are treated as missed requests when no newer bot reply in the scanned history references the same URL and the URL is not already present in the recovery backup queue.
+- Authorized DM messages containing an HTTP/HTTPS link are treated as missed
+  requests when no newer bot reply in scanned history references the extracted
+  URL and that URL is not already present in the recovery backup queue.
 - Missed requests are acknowledged in Discord and queued oldest-first using the same standard video download path as live DM URL requests.
 - The scan is intentionally limited to recent DM history so startup remains bounded and previously acknowledged requests are not replayed indefinitely.
 - This duplicate-prevention step keeps startup catch-up from re-queuing downloads that are already scheduled for recovery from `downloads_backup.json`.

@@ -147,6 +147,8 @@ LZY_EXECUTABLE_PATH: Optional[str] = os.getenv('LZY_EXECUTABLE_PATH')
 
 # Pre-compiled regexes for high-frequency webhook parsing
 YOUTUBE_ID_REGEX = re.compile(r"(?:youtu\.be/|v=|/shorts/|/live/)([0-9A-Za-z_-]{11})(?:\?|&|/|$)")
+HTTP_URL_REGEX = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+MARKDOWN_LINK_URL_REGEX = re.compile(r"\]\((https?://[^\s)]+)\)", re.IGNORECASE)
 NORMALIZE_URL_REGEX = re.compile(r"^https?://(www\.)?")
 QUEUE_POSITION_REGEX = re.compile(r"\s*\(Position:?\s*\d+\)", re.IGNORECASE)
 TERMINAL_WEBHOOK_STATUSES = frozenset({
@@ -271,11 +273,37 @@ def cleanup_subprocess() -> None:
 
 atexit.register(cleanup_subprocess)
 
+def extract_url(text: str) -> str:
+    """Extracts the first HTTP(S) URL from plain text or a shared Markdown link."""
+    value = str(text or "")
+    markdown_match = MARKDOWN_LINK_URL_REGEX.search(value)
+    candidates = [markdown_match.group(1)] if markdown_match else []
+    candidates.extend(
+        match.group(0).split("](", 1)[0]
+        for match in HTTP_URL_REGEX.finditer(value)
+    )
+    for candidate in candidates:
+        candidate = candidate.rstrip(".,;!?")
+        for closer, opener in ((")", "("), ("]", "["), ("}", "{")):
+            while (
+                candidate.endswith(closer)
+                and candidate.count(closer) > candidate.count(opener)
+            ):
+                candidate = candidate[:-1]
+        if is_valid_url(candidate):
+            return candidate
+    return ""
+
+
 def is_valid_url(url: str) -> bool:
     """Validates that a string is a properly formatted HTTP/HTTPS URL."""
     try:
         result = urlparse(url)
-        return result.scheme in ('http', 'https') and bool(result.netloc)
+        return (
+            result.scheme.lower() in ('http', 'https')
+            and bool(result.hostname)
+            and not any(character.isspace() for character in url)
+        )
     except Exception:
         return False
 
@@ -690,7 +718,7 @@ class LzyBot(discord.Client):
                 missed_msgs = []
                 for i, msg in enumerate(messages):
                     if msg.author.id == int(AUTHORIZED_USER_ID):
-                        content = msg.content.strip()
+                        content = extract_url(msg.content)
                         if is_valid_url(content):
                             # Skip if this URL is already slated to be resumed/tracked
                             content_identity = download_identity(content)
@@ -716,7 +744,7 @@ class LzyBot(discord.Client):
 
                 # Process oldest missed messages first
                 for msg in reversed(missed_msgs):
-                    content = msg.content.strip()
+                    content = extract_url(msg.content)
                     sent_msg = await msg.channel.send(
                         f"⏳ **Missed offline request detected. Starting download:** <{content}>\n"
                         "*Running in background...*"
@@ -794,6 +822,7 @@ class LzyBot(discord.Client):
                 await message.channel.send(f"❌ {safe_result}")
             return
 
+        content = extract_url(content)
         if is_valid_url(content):
             sent_msg = await message.channel.send(
                 f"⏳ **Starting download:** <{content}>\n"
@@ -884,6 +913,7 @@ async def download(interaction: discord.Interaction, url: str) -> None:
         await interaction.response.send_message(UNAUTHORIZED_MESSAGE, ephemeral=True)
         return
         
+    url = extract_url(url)
     if not is_valid_url(url):
         await interaction.response.send_message(
             "❌ Invalid URL provided. Please provide a valid HTTP/HTTPS link.", 
@@ -983,6 +1013,7 @@ async def audio(interaction: discord.Interaction, url: str) -> None:
         await interaction.response.send_message(UNAUTHORIZED_MESSAGE, ephemeral=True)
         return
         
+    url = extract_url(url)
     if not is_valid_url(url):
         await interaction.response.send_message(
             "❌ Invalid URL provided. Please provide a valid HTTP/HTTPS link.", 

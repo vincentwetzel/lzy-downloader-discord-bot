@@ -32,10 +32,13 @@ jobs by title and ID. Cancellation is asynchronous: the command confirms that
 the request was accepted, and the original progress message is updated when
 the C++ backend emits the terminal `Cancelled`/`Canceled` webhook state.
 
-Authorized users can also DM the bot a plain HTTP/HTTPS URL to start a standard
-video download without using a slash command. In DMs, send `ping` to verify
-that the bot is online or `cancel <job_id>` to request cancellation. Other
-users receive setup instructions instead of a silent response.
+Authorized users can also DM the bot an HTTP/HTTPS URL to start a standard
+video download without using a slash command. DM text and `/download` or
+`/audio` URL values may contain shared text or Markdown links; the bot extracts
+the HTTP(S) link target, including from Android share messages. In DMs, send
+`ping` to verify that the bot is online or `cancel <job_id>` to request
+cancellation. Other users receive setup instructions instead of a silent
+response.
 
 ## Features
 - **Slash Commands:** Supports `/download <url>`, `/audio <url>`, `/downloads`, `/cancel <job_id>`, `/retry_failed`, `/clear_failed`, `/help`, `/ping`, and `/stop`.
@@ -43,8 +46,9 @@ users receive setup instructions instead of a silent response.
   responses link users to LzyDownloader and explain how to run the bridge with
   their own Discord bot; the authorized owner's online notification remains a
   concise status message.
-- **Direct Message Downloads:** Send the bot a URL in DMs to enqueue a download from anywhere Discord is available.
-- **Offline DM Catch-Up:** On startup, the bot checks recent authorized DM history for URL requests it missed while offline and starts any unacknowledged requests oldest-first, while skipping URLs that are already present in the recovery backup so resumed downloads are not queued twice.
+- **Direct Message Downloads:** Send the bot a URL or text containing an
+  HTTP(S) link in DMs; Markdown link targets are extracted before enqueueing.
+- **Offline DM Catch-Up:** On startup, the bot checks recent authorized DM history for missed messages containing HTTP(S) links and starts unacknowledged requests oldest-first, while skipping extracted URLs already present in the recovery backup.
 - **Coordinator attach:** If the Local API is unavailable, the bot launches
   `--server --exit-after`. That starts a headless coordinator when needed or
   attaches to an existing GUI coordinator without creating a second queue.

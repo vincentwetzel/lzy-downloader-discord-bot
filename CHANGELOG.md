@@ -15,6 +15,8 @@ changes documented in this repository.
 
 ### Changed
 
+- **Shared-link input:** Extract HTTP(S) destinations from Markdown links and
+  shared text in direct messages, slash commands, and offline DM recovery.
 - **Self-hosting guidance:** Public `/help` and unauthorized slash commands
   or direct messages explain how users can install LzyDownloader and run the
   bridge with their own Discord bot instead of only saying `Unauthorized` or

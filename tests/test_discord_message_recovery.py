@@ -48,6 +48,20 @@ class FakeWebhookRequest:
 
 
 class DiscordMessageRecoveryTests(unittest.TestCase):
+    def test_extract_url_from_android_markdown_share(self):
+        shared_text = (
+            "Joe Trippi: Polling Problem "
+            "[https://example.test/label](https://example.test/video?id=42)."
+        )
+        self.assertEqual(
+            bridge.extract_url(shared_text), "https://example.test/video?id=42"
+        )
+        self.assertEqual(
+            bridge.extract_url("Shared: https://example.test/video)."),
+            "https://example.test/video",
+        )
+        self.assertEqual(bridge.extract_url("There is no link here."), "")
+
     @staticmethod
     def temporary_state_path():
         """Returns a unique repository-local state path for restricted runners."""
