@@ -17,7 +17,7 @@ under their own service or process supervisor.
   - Exposes `GET /status` to retrieve active jobs with URL, title, progress, speed, ETA, and status data.
   - Pushes real-time state changes to the Discord bot's webhook server.
   - Persists coordinator-owned queue state in `downloads_backup.json` so interrupted or failed work can be inspected or recovered later.
-- **Server Mode:** `--server --exit-after` starts a headless coordinator when none exists, or attaches to the existing GUI coordinator and asks it to expose the API.
+- **Server Mode:** `--server --exit-after` starts a headless coordinator when none exists, or attaches to the existing GUI coordinator and asks it to expose the API. On Windows, the bridge does not pass `STARTF_USESHOWWINDOW`/`SW_HIDE`; the app owns initial window visibility so a later GUI activation can show it. Revealing that window preserves `--exit-after`, and the coordinator exits after its queue becomes idle.
 - **Settings Ownership:** User preferences remain owned by the C++ app's shared `settings.ini`; the bridge does not create or modify settings files.
 
 ### 2. Discord Bridge Bot (Python Frontend)
@@ -56,6 +56,9 @@ under their own service or process supervisor.
    DMs also accept `cancel <job_id>`.
 2. The bot validates the URL and checks whether the local API is already healthy.
 3. If needed, the bot launches LzyDownloader with `--server --exit-after`.
+   On Windows it leaves startup-window state unspecified; the app keeps the
+   server window hidden until activation, then honors `--exit-after` after the
+   queue becomes idle.
 4. The bot reads the local API token and sends `POST /enqueue` with the URL, download type, and an explicit `override_archive` confirmation for intentional bot requests.
    - Cancellation uses the same bearer token and sends `POST /cancel` with `job_id`; the bridge waits for the C++ `Cancelled` webhook state before closing its progress task.
    - New jobs use a bridge-generated UUID in both `job_id` and `id` before `/enqueue` is sent. If the backend rejects the URL asynchronously, the rejection webhook can therefore update and clean up the correct Discord job.

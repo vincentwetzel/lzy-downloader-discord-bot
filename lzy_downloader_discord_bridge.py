@@ -1642,18 +1642,15 @@ def check_api_health() -> None:
 
     print("LzyDownloader not detected. Launching in server mode...")
     app_dir = os.path.dirname(lzy_executable_path)
-    # CREATE_NO_WINDOW flag prevents a console from flashing on Windows
+    # LzyDownloader is a GUI-subsystem executable and keeps its server-mode
+    # window unmapped itself. Do not pass STARTF_USESHOWWINDOW/SW_HIDE here:
+    # Windows applies that startup show state to the first ShowWindow call,
+    # which is the later coordinator GUI-activation request.
     creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-    startupinfo = None
-    if os.name == 'nt':
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = getattr(subprocess, 'SW_HIDE', 0)
     _lzy_process = subprocess.Popen(
         [lzy_executable_path, "--server", "--exit-after"], 
         cwd=app_dir, 
         creationflags=creation_flags,
-        startupinfo=startupinfo,
     )
 
     # Now, poll for it to become ready

@@ -382,11 +382,12 @@ class DiscordMessageRecoveryTests(unittest.TestCase):
                  patch.object(bridge, "load_dotenv"), \
                  patch.object(bridge.os.path, "exists", return_value=True), \
                  patch.object(bridge, "validate_windows_executable_loadable"), \
-                 patch.object(bridge.subprocess, "Popen", return_value=process), \
+                 patch.object(bridge.subprocess, "Popen", return_value=process) as popen_mock, \
                  patch.object(bridge.requests, "get", return_value=response), \
                  patch.object(bridge.time, "sleep"):
                 bridge.check_api_health()
             process.terminate.assert_not_called()
+            self.assertNotIn("startupinfo", popen_mock.call_args.kwargs)
         finally:
             bridge._lzy_process = previous_process
 

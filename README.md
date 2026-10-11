@@ -51,7 +51,11 @@ response.
 - **Offline DM Catch-Up:** On startup, the bot checks recent authorized DM history for missed messages containing HTTP(S) links and starts unacknowledged requests oldest-first, while skipping extracted URLs already present in the recovery backup.
 - **Coordinator attach:** If the Local API is unavailable, the bot launches
   `--server --exit-after`. That starts a headless coordinator when needed or
-  attaches to an existing GUI coordinator without creating a second queue.
+  attaches to an existing GUI coordinator without creating a second queue. On
+  Windows the bridge does not force a hidden first-show state; LzyDownloader
+  keeps its server window hidden until a GUI activation request. That request
+  preserves `--exit-after`, so the visible app closes after the queue becomes
+  idle.
 - **Startup Recovery:** If coordinator-owned downloads were saved in `downloads_backup.json`, the bot registers them before attaching to or starting LzyDownloader, prunes completed entries, and resumes progress tracking without losing startup webhook events. A request/expanded-child ID mismatch is recovered by normalized URL and download type.
 - **Restart-Safe Discord Status:** Active jobs retain their Discord channel/message IDs in a bridge-owned state file, written atomically so a bot restart edits the original status message instead of posting a new one. Older jobs are migrated by matching the most recent 100 DM messages by URL or unique backed-up title; duplicate legacy status messages are updated together. A missing or corrupt state file is treated as empty and does not prevent startup.
 - **Dynamic URL Expansion:** Seamlessly maps internal ID changes from URL expansions (e.g., YouTube Shorts or playlists) back to the original Discord request to keep the UI perfectly synced.

@@ -52,7 +52,11 @@ the GUI without changing queue ownership.
 - **Lifecycle:** Started or attached to on demand by the Interaction Agent via
   CLI (`--server --exit-after`). A secondary launch exits successfully after it
   asks an existing GUI coordinator to expose the API. The bridge never kills a
-  coordinator because it may also be serving the user's GUI.
+  coordinator because it may also be serving the user's GUI. On Windows, the
+  bridge must not pass `STARTF_USESHOWWINDOW` with `SW_HIDE`; server-mode window
+  visibility is managed by LzyDownloader so a later GUI activation can show
+  the owner. Activation preserves explicit `--exit-after`, which remains in
+  effect once the shared queue becomes idle.
 - **Tasks:**
   - Processes the actual media downloads.
   - Applies the user's shared LzyDownloader GUI preferences from the main application settings.
