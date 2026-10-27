@@ -40,6 +40,7 @@ UNAUTHORIZED_MESSAGE: str = (
 ONLINE_MESSAGE: str = (
     "🟢 **LzyDownloader Discord Bridge is now online!**"
 )
+DOWNLOADS_FINISHED_MESSAGE: str = "✅ **All downloads are finished!**"
 
 # Load the Discord token from the .env file located in the script's directory
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1729,14 +1730,29 @@ async def register_active_job(
 
 
 async def unregister_active_job(job_key: str) -> None:
-    """Removes a tracked job and keeps the active-job count consistent."""
-    if job_key in client.active_jobs:
-        del client.active_jobs[job_key]
+    """Removes a job and notifies the owner when terminal work drains."""
+    job_data = client.active_jobs.pop(job_key, None)
+    if job_data is None:
+        return
     forget_discord_messages(job_key)
 
     assert client.jobs_lock is not None
     async with client.jobs_lock:
         client.active_job_count = max(0, client.active_job_count - 1)
+        notify_finished = (
+            client.active_job_count == 0
+            and bool(job_data.get("is_final"))
+            and not client.closing
+        )
+
+    if not notify_finished or not AUTHORIZED_USER_ID:
+        return
+
+    try:
+        user = await client.fetch_user(int(AUTHORIZED_USER_ID))
+        await user.send(DOWNLOADS_FINISHED_MESSAGE)
+    except Exception:
+        logger.exception("Could not send the all-downloads-finished DM.")
 
 
 async def resume_backed_up_downloads_on_startup(

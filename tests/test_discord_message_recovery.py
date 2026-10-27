@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
@@ -288,6 +288,45 @@ class DiscordMessageRecoveryTests(unittest.TestCase):
             bot.active_jobs[job_id]["error"],
             "Another download request is already being processed.",
         )
+
+    def test_completion_dm_is_sent_once_when_tracked_jobs_drain(self):
+        tracked_client = bridge.client
+        old_jobs = tracked_client.active_jobs
+        old_count = tracked_client.active_job_count
+        old_lock = tracked_client.jobs_lock
+        old_closing = tracked_client.closing
+        try:
+            tracked_client.active_jobs = {
+                job_id: {"is_final": True}
+                for job_id in ("first-job", "last-job")
+            }
+            tracked_client.active_job_count = 2
+            tracked_client.jobs_lock = asyncio.Lock()
+            tracked_client.closing = False
+            user = SimpleNamespace(send=AsyncMock())
+            fetch_user = AsyncMock(return_value=user)
+
+            async def unregister_jobs() -> None:
+                with patch.object(bridge, "AUTHORIZED_USER_ID", "123"), \
+                     patch.object(bridge, "forget_discord_messages"), \
+                     patch.object(tracked_client, "fetch_user", fetch_user):
+                    await bridge.unregister_active_job("first-job")
+                    fetch_user.assert_not_awaited()
+                    await bridge.unregister_active_job("last-job")
+                    await bridge.unregister_active_job("last-job")
+
+            asyncio.run(unregister_jobs())
+
+            fetch_user.assert_awaited_once_with(123)
+            user.send.assert_awaited_once_with(
+                bridge.DOWNLOADS_FINISHED_MESSAGE
+            )
+            self.assertEqual(tracked_client.active_job_count, 0)
+        finally:
+            tracked_client.active_jobs = old_jobs
+            tracked_client.active_job_count = old_count
+            tracked_client.jobs_lock = old_lock
+            tracked_client.closing = old_closing
 
     def test_stream_complete_does_not_close_job_before_finalization(self):
         bot = bridge.LzyBot()

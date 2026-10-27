@@ -16,6 +16,7 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
     offline requests containing HTTP(S) links oldest-first, while skipping
     extracted URLs already in the recovery backup queue to avoid duplicates.
   - Sends concise online and offline notification DMs to the authorized user when connecting or gracefully shutting down; setup links are reserved for public `/help` and unauthorized-user guidance.
+  - Sends the authorized user a brief green-check DM when the last tracked download reports a terminal webhook state and bridge tracking drains; the notice means the tracked batch is finished, including failed or cancelled jobs.
   - Checks the health of the local C++ API and asks the shared downloader
     coordinator to expose it when necessary; it never terminates that
     coordinator on bridge shutdown.

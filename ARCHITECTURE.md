@@ -31,13 +31,13 @@ under their own service or process supervisor.
     embedded in shared text or Markdown, as standard video downloads.
   - Scans recent authorized DM history on startup for unacknowledged messages
     containing an HTTP(S) link and queues the extracted target when offline.
-  - Notifies the authorized user via DM when it successfully connects to Discord or gracefully shuts down; the online message is a concise status notification.
+  - Sends concise DMs to the authorized user on connection, graceful shutdown, and after the tracked download batch drains on a terminal webhook event. The batch notice means work is finished, including failed or cancelled jobs.
   - Makes `/help` public and includes links for users who want to install LzyDownloader and run their own bridge; the authorized owner's online notification does not repeat those instructions.
   - Explains the same self-hosting setup when an unauthorized user invokes a restricted command or sends a direct message.
   - Attaches to the C++ coordinator when the local API is unavailable. It does not terminate the coordinator on bridge shutdown because it may also own the visible GUI.
   - Hosts a local webhook server (`127.0.0.1:8766`) to receive instant, event-driven progress updates from the C++ app. During startup recovery, unknown webhook payloads are bounded in memory and replayed after recovered jobs are registered, preventing a server-startup race from dropping progress events.
   - **Strictly Event-Driven:** Polling the local API (e.g., `GET /status`) for live progress updates is explicitly forbidden. All state tracking must rely solely on the push updates provided by the webhook server.
-  - Tracks active download jobs so the user receives completion and queue-empty notifications.
+  - Tracks active download jobs, updates each original progress message at its terminal state, and sends one green-check DM when the final tracked job reports a terminal state and tracking drains.
   - Prevents duplicate bot processes by binding a local single-instance lock socket.
   - Sanitizes dynamic data (video titles, API errors, status texts) from the C++ API to prevent unintended Discord markdown or spoiler formatting, and redacts Windows, POSIX, and local file-URI paths before diagnostics are sent to Discord.
   - Writes bridge output, Discord/aiohttp library diagnostics, incoming webhook payloads, and uncaught exception tracebacks to `bot.log` beside the entrypoint. The active file rotates at 10 MB into timestamped archives, retaining five. Because webhook payloads can contain URLs, titles, backend errors, and local diagnostic details, the log file must be treated as local-sensitive data.
@@ -64,7 +64,7 @@ under their own service or process supervisor.
    - New jobs use a bridge-generated UUID in both `job_id` and `id` before `/enqueue` is sent. If the backend rejects the URL asynchronously, the rejection webhook can therefore update and clean up the correct Discord job.
 5. The bot receives instant webhook POST requests on `127.0.0.1:8766` and smoothly edits the original Discord message with progress, including the job's active queue position. (Polling is strictly prohibited).
    - *Note on URL Expansion:* If LzyDownloader expands a URL or playlist (which spawns a child item with a new internal ID), the bot dynamically routes the incoming webhook payloads back to the original tracked job using `parent_id` or fuzzy URL matching.
-6. When the job completes or leaves the active queue, the bot updates the original message with a final completion or failure status. Backend error text is included when available, then the job is removed from `active_jobs`.
+6. When the job completes or leaves the active queue, the bot updates the original message with a final completion or failure status. Backend error text is included when available, then the job is removed from `active_jobs`. If the last tracked job reports a terminal webhook state as tracking drains, the bot sends the authorized user `✅ All downloads are finished!` by DM. This means the batch is finished, including when a job failed or was cancelled; each job's original message has its result.
    - Non-interactive validation failures use the caller-supplied job ID, include the generic backend diagnostic, update the Discord message, and are removed from `active_jobs` through the normal terminal cleanup path.
 
 ## Offline DM Catch-Up
