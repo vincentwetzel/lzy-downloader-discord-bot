@@ -14,7 +14,7 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
     `/download` and `/audio` URL arguments also accept shared text and Markdown.
   - Scans recent authorized direct messages on startup and queues unacknowledged
     offline requests containing HTTP(S) links oldest-first, while skipping
-    extracted URLs already in the recovery backup queue to avoid duplicates.
+    extracted URLs already tracked as Discord-origin jobs to avoid duplicates.
   - Sends concise online and offline notification DMs to the authorized user when connecting or gracefully shutting down; setup links are reserved for public `/help` and unauthorized-user guidance.
   - Sends the authorized user a brief green-check DM when the last tracked download reports a terminal webhook state and bridge tracking drains; the notice means the tracked batch is finished, including failed or cancelled jobs.
   - Checks the health of the local C++ API and asks the shared downloader
@@ -31,13 +31,14 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
   - Sends authenticated cancellation requests for active job IDs and recognizes `Cancelled`/`Canceled` webhook states as terminal.
   - Generates and registers a UUID before each new enqueue request, passing it as both `job_id` and `id` so asynchronous backend validation failures remain associated with the originating Discord message.
   - Pre-registers caller-supplied job IDs before enqueueing so asynchronous validation failures can be matched, reported, and removed immediately.
-  - Pre-registers all queued recovery jobs before launching the C++ worker so startup webhook events cannot arrive before bridge tracking exists.
+  - Pre-registers only Discord-owned queued jobs before launching the C++ worker so startup webhook events cannot arrive before bridge tracking exists; GUI-submitted jobs remain owned by the shared coordinator and are not announced or retried by the bridge.
   - Buffers bounded webhook events received while startup recovery is registering jobs, then replays them after recovery; persisted message state also matches expanded child IDs by normalized URL and download type.
-  - Persists active job Discord message references with atomic state-file replacement and reconnects those messages after a bridge restart; missing or corrupt state is recoverable, while legacy progress messages are migrated from at most 100 recent DM messages when their URL or unique backed-up title identifies them.
+  - Persists Discord job provenance and active Discord message references with atomic state-file replacement; failed jobs remain identifiable after terminal messages close, and the bridge reconnects only Discord-owned jobs after restart. Missing or corrupt state is recoverable, while legacy progress messages are migrated from at most 100 recent DM messages only when their backup URL identity is unambiguous.
   - Sanitizes dynamic webhook text (like titles and status updates) to prevent accidental Discord markdown rendering, and redacts Windows, POSIX, and local file-URI paths before diagnostic text is sent to Discord.
   - Reads the coordinator-owned `downloads_backup.json` from the platform data
-    root to resume startup work, prune completed backup entries, and retry or
-    clear inactive recovery jobs.
+    root to reconnect Discord-owned jobs and retry or clear their inactive
+    recovery entries. Durable bridge provenance is stored alongside Discord
+    message references; startup recovery does not rewrite the shared backup.
   - Uses extractor-independent URL identity normalization to avoid re-queueing equivalent recovery entries or offline DM requests that differ only by tracking/share parameters.
   - Includes backend `error` diagnostics in terminal Discord messages when supplied by a webhook.
   - Archives previous backup files before recovery cleanup so recovery state is not discarded silently.

@@ -15,6 +15,7 @@ changes documented in this repository.
 
 ### Changed
 
+- **Discord download ownership:** Startup reconnects only to Discord-origin jobs, keeps GUI-origin downloads out of automatic Discord progress tracking, and leaves the coordinator-owned backup untouched during startup. Retry and cleanup commands are scoped to bridge-owned jobs and preserve other shared-queue entries.
 - **Download completion DM:** Send the authorized user a green-check DM when the tracked batch drains after a terminal webhook event. The notice means the batch has ended, including failed or cancelled jobs; each original message retains its detailed result.
 - **Shared-link input:** Extract HTTP(S) destinations from Markdown links and
   shared text in direct messages, slash commands, and offline DM recovery.

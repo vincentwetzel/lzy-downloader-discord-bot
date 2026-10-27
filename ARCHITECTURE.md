@@ -37,7 +37,7 @@ under their own service or process supervisor.
   - Attaches to the C++ coordinator when the local API is unavailable. It does not terminate the coordinator on bridge shutdown because it may also own the visible GUI.
   - Hosts a local webhook server (`127.0.0.1:8766`) to receive instant, event-driven progress updates from the C++ app. During startup recovery, unknown webhook payloads are bounded in memory and replayed after recovered jobs are registered, preventing a server-startup race from dropping progress events.
   - **Strictly Event-Driven:** Polling the local API (e.g., `GET /status`) for live progress updates is explicitly forbidden. All state tracking must rely solely on the push updates provided by the webhook server.
-  - Tracks active download jobs, updates each original progress message at its terminal state, and sends one green-check DM when the final tracked job reports a terminal state and tracking drains.
+  - Tracks Discord-submitted jobs, updates each original progress message at its terminal state, and sends one green-check DM when the final tracked job reports a terminal state and tracking drains. GUI-origin jobs remain visible to the shared C++ coordinator only.
   - Prevents duplicate bot processes by binding a local single-instance lock socket.
   - Sanitizes dynamic data (video titles, API errors, status texts) from the C++ API to prevent unintended Discord markdown or spoiler formatting, and redacts Windows, POSIX, and local file-URI paths before diagnostics are sent to Discord.
   - Writes bridge output, Discord/aiohttp library diagnostics, incoming webhook payloads, and uncaught exception tracebacks to `bot.log` beside the entrypoint. The active file rotates at 10 MB into timestamped archives, retaining five. Because webhook payloads can contain URLs, titles, backend errors, and local diagnostic details, the log file must be treated as local-sensitive data.
@@ -71,21 +71,21 @@ under their own service or process supervisor.
 - After Discord reports the bridge as ready, the bot sends the authorized user an online DM and reads the most recent DM messages.
 - Authorized DM messages containing an HTTP/HTTPS link are treated as missed
   requests when no newer bot reply in scanned history references the extracted
-  URL and that URL is not already present in the recovery backup queue.
+  URL and that URL is not already tracked as a Discord-origin job.
 - Missed requests are acknowledged in Discord and queued oldest-first using the same standard video download path as live DM URL requests.
 - The scan is intentionally limited to recent DM history so startup remains bounded and previously acknowledged requests are not replayed indefinitely.
-- This duplicate-prevention step keeps startup catch-up from re-queuing downloads that are already scheduled for recovery from `downloads_backup.json`.
+- This duplicate-prevention step uses bridge-owned provenance so a GUI download with the same URL does not suppress a missed Discord request.
 
 ## Recovery Flow
 - The bridge reads `<platform data root>/LzyDownloader/downloads_backup.json` for shared coordinator backup entries.
-- Queued resumable entries can be resumed after startup by relaunching LzyDownloader and reattaching Discord progress tracking.
-- The bridge persists each active job's Discord channel/message IDs in `discord_message_state.json` using an atomic temporary-file replacement. Startup fetches those messages before creating any replacement; for pre-state jobs it scans at most the most recent 100 DM messages and matches the backed-up URL or a title unique within the recovery batch. If multiple legacy copies match, all copies are edited together so stale partial-progress messages do not remain frozen. A missing or invalid state file is ignored and rebuilt as jobs are registered.
+- Startup recovery is limited to Discord-owned jobs. Bridge state stores job provenance as well as active message references, allowing failed jobs to remain identifiable after their progress message closes. Legacy jobs can be claimed only when a matching bridge progress message is found in bounded DM history and the backup URL identity is unambiguous.
+- The bridge persists Discord job provenance and active jobs' Discord channel/message IDs in `discord_message_state.json` using an atomic temporary-file replacement. Startup fetches those messages before creating any replacement; legacy jobs are migrated only when a matching progress message is found in at most the most recent 100 DM messages and the backup URL identity is unambiguous. If multiple legacy copies match, all copies are edited together so stale partial-progress messages do not remain frozen. A missing or invalid state file is ignored and rebuilt as jobs are registered.
+- The coordinator owns the shared queue backup. The bridge does not prune entries during startup, and `/retry_failed` and `/clear_failed` operate only on bridge-owned jobs while preserving other coordinator entries.
 - Recovery tracking entries are registered before the first LzyDownloader launch because server startup immediately emits events for every restored queue item. `on_ready()` completes this setup before missed-DM catch-up can start another task.
 - Failed, stopped, or errored entries are treated as stranded jobs and are not assumed to auto-run safely.
-- Completed entries are pruned from the backup file during startup recovery so they do not linger as resumable work.
-- `/retry_failed` archives the previous backup, preserves still-queued resumable entries, and re-enqueues failed, stopped, or errored URLs for fresh tracking.
-- Before `/retry_failed` enqueues work, the bridge keeps one record per generic normalized URL identity and download type. The same identity is used when comparing offline DM requests with backup entries, so tracking/share query changes cannot create a second recovery job.
-- `/clear_failed` archives the previous backup and rewrites the backup file with only resumable queued entries, removing failed, stopped, errored, and completed entries.
+- `/retry_failed` archives the previous backup, preserves other coordinator entries, and re-enqueues Discord-owned failed, stopped, or errored URLs for fresh tracking.
+- Before `/retry_failed` enqueues work, the bridge keeps one record per generic normalized URL identity and download type. The same identity is used when comparing offline DM requests with Discord-owned jobs, so tracking/share query changes cannot create a second recovery job.
+- `/clear_failed` archives the previous backup and removes only Discord-owned failed, stopped, errored, and completed entries.
 - Bridge-created archive files use names like `downloads_backup.json.discord_recovery_<timestamp>.bak` and `downloads_backup.json.cleared_failed_<timestamp>.bak`.
 
 ## Local API Contract

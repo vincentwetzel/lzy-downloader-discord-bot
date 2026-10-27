@@ -86,9 +86,77 @@ class DiscordMessageRecoveryTests(unittest.TestCase):
                 )
                 bridge.forget_discord_messages("job-1")
                 self.assertEqual(bridge.load_discord_message_state(), {})
+                self.assertIn("job-1", bridge.load_discord_owned_jobs())
         finally:
             state_path.unlink(missing_ok=True)
             Path(str(state_path) + ".tmp").unlink(missing_ok=True)
+
+    def test_recovery_ownership_excludes_gui_jobs_and_accepts_child_ids(self):
+        discord_item = {
+            "id": "child-job",
+            "url": "https://example.test/video",
+            "options": {"type": "video"},
+        }
+        gui_item = {
+            "id": "gui-job",
+            "url": "https://example.test/other",
+            "options": {"type": "video"},
+        }
+        owned_jobs = {
+            "parent-job": {
+                "url": "https://example.test/video?utm_source=discord",
+                "download_type": "video",
+            }
+        }
+
+        self.assertTrue(
+            bridge.is_discord_owned_backup_item(
+                discord_item, owned_jobs, [discord_item, gui_item]
+            )
+        )
+        self.assertFalse(
+            bridge.is_discord_owned_backup_item(
+                gui_item, owned_jobs, [discord_item, gui_item]
+            )
+        )
+
+    def test_recovery_ownership_does_not_guess_when_urls_are_ambiguous(self):
+        owned_jobs = {
+            "discord-job": {
+                "url": "https://example.test/video",
+                "download_type": "video",
+            }
+        }
+        backup_items = [
+            {"id": "gui-job", "url": "https://example.test/video", "options": {"type": "video"}},
+            {"id": "other-gui-job", "url": "https://example.test/video?utm_campaign=x", "options": {"type": "video"}},
+        ]
+
+        self.assertFalse(
+            bridge.is_discord_owned_backup_item(
+                backup_items[0], owned_jobs, backup_items
+            )
+        )
+
+    def test_startup_recovery_only_migrates_legacy_items_with_unique_identity(self):
+        discord_item = {"id": "discord-job", "url": "https://example.test/discord"}
+        gui_item = {"id": "gui-job", "url": "https://example.test/gui"}
+        ambiguous_gui_item = {"id": "gui-copy", "url": "https://example.test/discord?utm_campaign=gui"}
+        backup_items = [discord_item, gui_item, ambiguous_gui_item]
+        owned_jobs = {
+            "discord-job": {
+                "url": "https://example.test/discord",
+                "download_type": "video",
+            }
+        }
+
+        selected = bridge.select_discord_recovery_candidates(
+            backup_items, backup_items, owned_jobs
+        )
+
+        # The unique GUI URL is eligible only for legacy-message matching;
+        # the duplicate URL cannot be attributed safely to either source.
+        self.assertEqual(selected, [discord_item, gui_item])
 
     def test_api_port_discovery_uses_valid_port_and_default_fallback(self):
         data_path = Path(__file__).parents[1] / f".test-api-port-{uuid.uuid4().hex}"

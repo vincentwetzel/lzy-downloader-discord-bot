@@ -708,12 +708,12 @@ class LzyBot(discord.Client):
                 dm_channel = await user.create_dm()
                 messages = [m async for m in dm_channel.history(limit=20)]
 
-                # Load backup items to prevent duplicate queueing of resumed downloads
-                backup_items = load_download_backup_items()
+                # Only bridge-owned jobs suppress an offline Discord request.
+                # The coordinator backup also contains GUI-submitted jobs.
                 resumed_urls = {
-                    download_identity(str(item.get("url", "")))
-                    for item in backup_items
-                    if item.get("url")
+                    download_identity(entry.get("url", ""))
+                    for entry in load_discord_owned_jobs().values()
+                    if entry.get("url")
                 }
 
                 missed_msgs = []
@@ -1054,7 +1054,7 @@ async def clear_failed(interaction: discord.Interaction) -> None:
     removed_count, kept_count, archive_path = clear_failed_backup_items()
     if removed_count == 0:
         await interaction.response.send_message(
-            "No inactive (failed/stopped/completed) recovery jobs were found in `downloads_backup.json`.",
+            "No inactive Discord-owned recovery jobs were found in `downloads_backup.json`.",
             ephemeral=True
         )
         return
@@ -1078,13 +1078,16 @@ async def retry_failed(interaction: discord.Interaction) -> None:
         await interaction.response.send_message(UNAUTHORIZED_MESSAGE, ephemeral=True)
         return
 
+    backup_items = load_download_backup_items()
+    owned_jobs = load_discord_owned_jobs()
     retry_count = len(deduplicate_retry_items([
-        item for item in load_download_backup_items()
+        item for item in backup_items
         if should_retry_backup_item(item)
+        and is_discord_owned_backup_item(item, owned_jobs, backup_items)
     ]))
     if retry_count == 0:
         await interaction.response.send_message(
-            "No failed or stopped recovery jobs were found in `downloads_backup.json`.",
+            "No failed or stopped Discord-owned recovery jobs were found in `downloads_backup.json`.",
             ephemeral=True
         )
         return
@@ -1251,15 +1254,44 @@ def load_discord_message_state() -> Dict[str, Dict[str, Any]]:
     }
 
 
-def save_discord_message_state(state: Dict[str, Dict[str, Any]]) -> None:
-    """Atomically saves bridge-owned Discord message references."""
+def load_discord_owned_jobs() -> Dict[str, Dict[str, str]]:
+    """Loads durable provenance for jobs submitted through Discord."""
+    state_path = get_discord_message_state_path()
+    try:
+        with open(state_path, 'r', encoding='utf-8') as state_file:
+            data = json.load(state_file)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    owned_jobs = data.get("owned_jobs") if isinstance(data, dict) else None
+    if not isinstance(owned_jobs, dict):
+        return {}
+    return {
+        str(job_id): {
+            "url": str(entry.get("url") or ""),
+            "download_type": str(entry.get("download_type") or "video"),
+        }
+        for job_id, entry in owned_jobs.items()
+        if isinstance(entry, dict)
+    }
+
+
+def save_discord_message_state(
+    state: Dict[str, Dict[str, Any]],
+    owned_jobs: Optional[Dict[str, Dict[str, str]]] = None,
+) -> None:
+    """Atomically saves Discord status references and job provenance."""
     state_path = get_discord_message_state_path()
     state_dir = os.path.dirname(state_path)
     temp_path = f"{state_path}.tmp"
     try:
         os.makedirs(state_dir, exist_ok=True)
         with open(temp_path, 'w', encoding='utf-8') as state_file:
-            json.dump({"version": 1, "jobs": state}, state_file, indent=2)
+            json.dump({
+                "version": 2,
+                "jobs": state,
+                "owned_jobs": owned_jobs if owned_jobs is not None else load_discord_owned_jobs(),
+            }, state_file, indent=2)
             state_file.write("\n")
         os.replace(temp_path, state_path)
     except (OSError, TypeError) as error:
@@ -1306,7 +1338,12 @@ def remember_discord_messages(
         "download_type": str(download_type),
         "messages": references,
     }
-    save_discord_message_state(state)
+    owned_jobs = load_discord_owned_jobs()
+    owned_jobs[str(job_id)] = {
+        "url": str(url),
+        "download_type": str(download_type),
+    }
+    save_discord_message_state(state, owned_jobs)
 
 
 def forget_discord_messages(job_id: str) -> None:
@@ -1316,6 +1353,71 @@ def forget_discord_messages(job_id: str) -> None:
         return
     del state[str(job_id)]
     save_discord_message_state(state)
+
+
+def is_discord_owned_backup_item(
+    item: Dict[str, Any], owned_jobs: Optional[Dict[str, Dict[str, str]]] = None,
+    backup_items: Optional[List[Dict[str, Any]]] = None,
+) -> bool:
+    """Checks persisted Discord provenance by job ID, then an unambiguous URL."""
+    owned = owned_jobs if owned_jobs is not None else load_discord_owned_jobs()
+    if backup_item_job_ids(item).intersection(owned):
+        return True
+
+    item_key = (
+        download_identity(str(item.get("url", ""))),
+        get_backup_item_download_type(item),
+    )
+    if not item_key[0]:
+        return False
+    if backup_items is not None:
+        matching_backup_items = [
+            candidate for candidate in backup_items
+            if candidate.get("url") and (
+                download_identity(str(candidate.get("url", ""))),
+                get_backup_item_download_type(candidate),
+            ) == item_key
+        ]
+        if len(matching_backup_items) != 1:
+            return False
+    matching_jobs = {
+        job_id for job_id, entry in owned.items()
+        if (
+            download_identity(entry.get("url", "")),
+            entry.get("download_type", "video"),
+        ) == item_key
+    }
+    return len(matching_jobs) == 1
+
+
+def select_discord_recovery_candidates(
+    candidates: List[Dict[str, Any]],
+    all_backup_items: List[Dict[str, Any]],
+    owned_jobs: Dict[str, Dict[str, str]],
+) -> List[Dict[str, Any]]:
+    """Selects owned jobs and unambiguous legacy candidates for message migration."""
+    selected = []
+    backup_key_counts: Dict[Tuple[str, str], int] = {}
+    for item in all_backup_items:
+        if not item.get("url"):
+            continue
+        key = (
+            download_identity(str(item.get("url", ""))),
+            get_backup_item_download_type(item),
+        )
+        backup_key_counts[key] = backup_key_counts.get(key, 0) + 1
+
+    for item in candidates:
+        key = (
+            download_identity(str(item.get("url", ""))),
+            get_backup_item_download_type(item),
+        )
+        if (
+            is_discord_owned_backup_item(item, owned_jobs, all_backup_items)
+            or (key[0] and backup_key_counts.get(key) == 1)
+        ):
+            selected.append(item)
+    return selected
 
 
 def backup_item_job_ids(item: Dict[str, Any]) -> Set[str]:
@@ -1371,8 +1473,37 @@ def prune_discord_message_state(backup_items: Any) -> None:
             )
             if state_key in backup_keys:
                 retained[job_id] = entry
-    if retained != state:
-        save_discord_message_state(retained)
+    owned_jobs = load_discord_owned_jobs()
+    retained_owned = {}
+    backup_key_counts: Dict[Tuple[str, str], int] = {}
+    if not isinstance(backup_items, set):
+        for item in items:
+            if not item.get("url"):
+                continue
+            key = (
+                download_identity(str(item.get("url", ""))),
+                get_backup_item_download_type(item),
+            )
+            backup_key_counts[key] = backup_key_counts.get(key, 0) + 1
+    for job_id, entry in owned_jobs.items():
+        if job_id in backup_ids:
+            retained_owned[job_id] = entry
+            continue
+        owned_key = (
+            download_identity(entry.get("url", "")),
+            entry.get("download_type", "video"),
+        )
+        matching_owners = [
+            candidate for candidate in owned_jobs.values()
+            if (
+                download_identity(candidate.get("url", "")),
+                candidate.get("download_type", "video"),
+            ) == owned_key
+        ]
+        if backup_key_counts.get(owned_key) == 1 and len(matching_owners) == 1:
+            retained_owned[job_id] = entry
+    if retained != state or retained_owned != owned_jobs:
+        save_discord_message_state(retained, retained_owned)
 
 
 def backup_item_title_candidates(item: Dict[str, Any]) -> Set[str]:
@@ -1571,18 +1702,39 @@ def prepare_download_backup_for_recovery(
 
 
 def clear_failed_backup_items() -> Tuple[int, int, Optional[str]]:
-    """Removes failed/stopped jobs from downloads_backup.json after archiving it."""
+    """Removes inactive Discord-owned jobs, preserving the shared GUI queue."""
     backup_path = get_download_backup_path()
     items = load_download_backup_items()
     if not items or not os.path.exists(backup_path):
         return 0, 0, None
 
-    failed_items = [item for item in items if should_retry_backup_item(item)]
-    completed_items = [item for item in items if is_completed_backup_item(item)]
+    owned_jobs = load_discord_owned_jobs()
+    removable_items = [
+        item for item in items
+        if is_discord_owned_backup_item(item, owned_jobs, items)
+        and (should_retry_backup_item(item) or is_completed_backup_item(item))
+    ]
+    removable_ids = {
+        job_id for item in removable_items for job_id in backup_item_job_ids(item)
+    }
+    removable_keys = {
+        (download_identity(str(item.get("url", ""))), get_backup_item_download_type(item))
+        for item in removable_items if item.get("url")
+    }
     kept_items = [
         item for item in items
-        if item.get("url") and not should_retry_backup_item(item) and not is_completed_backup_item(item)
+        if not (
+            backup_item_job_ids(item).intersection(removable_ids)
+            or (
+                item.get("url")
+                and (download_identity(str(item.get("url", ""))), get_backup_item_download_type(item))
+                in removable_keys
+                and is_discord_owned_backup_item(item, owned_jobs, items)
+            )
+        )
     ]
+    failed_items = [item for item in removable_items if should_retry_backup_item(item)]
+    completed_items = [item for item in removable_items if is_completed_backup_item(item)]
     if not failed_items and not completed_items:
         return 0, len(kept_items), None
 
@@ -1602,6 +1754,8 @@ def clear_failed_backup_items() -> Tuple[int, int, Optional[str]]:
         except OSError as e:
             print(f"Could not rewrite remaining backup items: {e}")
             return len(failed_items) + len(completed_items), len(kept_items), archive_path
+
+    prune_discord_message_state(kept_items)
 
     return len(failed_items) + len(completed_items), len(kept_items), archive_path
 
@@ -1773,12 +1927,21 @@ async def resume_backed_up_downloads_on_startup(
             return
 
         if force:
-            retry_items = deduplicate_retry_items(
-                [item for item in items if should_retry_backup_item(item)]
-            )
+            owned_jobs = load_discord_owned_jobs()
+            retry_items = deduplicate_retry_items([
+                item for item in items
+                if should_retry_backup_item(item)
+                and is_discord_owned_backup_item(item, owned_jobs, items)
+            ])
+            retry_ids = {
+                job_id for item in items
+                if should_retry_backup_item(item)
+                and is_discord_owned_backup_item(item, owned_jobs, items)
+                for job_id in backup_item_job_ids(item)
+            }
             keep_items = [
                 item for item in items
-                if item.get("url") and not should_retry_backup_item(item) and not is_completed_backup_item(item)
+                if not backup_item_job_ids(item).intersection(retry_ids)
             ]
             if not retry_items:
                 return
@@ -1790,25 +1953,46 @@ async def resume_backed_up_downloads_on_startup(
             prefix = "🔄 **Retrying failed recovery job:**"
             skip_enqueue = False
         else:
-            # Automatically prune completed jobs from the backup file on startup
-            completed_items = [item for item in items if is_completed_backup_item(item)]
-            if completed_items:
-                keep_startup_items = [item for item in items if not is_completed_backup_item(item)]
-                try:
-                    def _prune_startup():
-                        with open(get_download_backup_path(), 'w', encoding='utf-8') as f:
-                            json.dump(keep_startup_items, f, indent=4)
-                    await asyncio.to_thread(_prune_startup)
-                    print(f"Pruned {len(completed_items)} completed item(s) from backup on startup.")
-                except Exception as e:
-                    print(f"Could not prune completed items on startup: {e}")
-
-            target_items = [
+            candidate_items = [
                 item for item in items 
                 if not should_retry_backup_item(item) and not is_completed_backup_item(item) and item.get("url")
             ]
+            if not candidate_items:
+                return
+
+            if user is None and AUTHORIZED_USER_ID:
+                try:
+                    user = await client.fetch_user(int(AUTHORIZED_USER_ID))
+                except Exception:
+                    pass
+            if user is None:
+                return
+            try:
+                dm_channel = await user.create_dm()
+            except Exception as e:
+                print(f"Could not create DM channel for recovery tracking: {e}")
+                return
+
+            owned_jobs = load_discord_owned_jobs()
+            recovery_candidates = select_discord_recovery_candidates(
+                candidate_items, items, owned_jobs
+            )
+            if not recovery_candidates:
+                return
+            recovered_messages = await client.find_recovery_messages(dm_channel, recovery_candidates)
+            target_items = []
+            target_recovered_messages = {}
+            for index, item in enumerate(recovery_candidates):
+                if (
+                    is_discord_owned_backup_item(item, owned_jobs, items)
+                    or index in recovered_messages
+                ):
+                    if index in recovered_messages:
+                        target_recovered_messages[len(target_items)] = recovered_messages[index]
+                    target_items.append(item)
             if not target_items:
                 return
+            recovered_messages = target_recovered_messages
             prefix = "🔄 **Resuming progress tracking:**"
             skip_enqueue = True
 
@@ -1827,9 +2011,8 @@ async def resume_backed_up_downloads_on_startup(
             print(f"Could not create DM channel for recovery tracking: {e}")
             return
 
-        recovered_messages = {}
-        if skip_enqueue:
-            recovered_messages = await client.find_recovery_messages(dm_channel, target_items)
+        if not skip_enqueue:
+            recovered_messages = {}
 
         # Closure-safe callback factory. A legacy restart can leave several
         # copies of one progress message in history; edit all matched copies

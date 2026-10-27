@@ -15,13 +15,13 @@ Instead of baking heavy Discord SDKs directly into the C++ desktop app, LzyDownl
 ## Available Commands
 *Project Requirement: This list must be kept updated as new commands are added to the bot.*
 - `/audio <url>` - Start a new audio-only download.
-- `/downloads` - List active downloads and their job IDs.
+- `/downloads` - List active Discord-tracked downloads and their job IDs.
 - `/cancel <job_id>` - Request cancellation of an active download.
-- `/clear_failed` - Clear inactive recovery jobs (failed, stopped, errored, or completed) from `downloads_backup.json`.
+- `/clear_failed` - Clear Discord-owned inactive recovery jobs (failed, stopped, errored, or completed) from `downloads_backup.json`.
 - `/download <url>` - Start a new standard video download.
 - `/help` - List all available commands.
 - `/ping` - Ping the bot to check its status.
-- `/retry_failed` - Retry failed, stopped, or errored recovery jobs from `downloads_backup.json`.
+- `/retry_failed` - Retry Discord-owned failed, stopped, or errored recovery jobs from `downloads_backup.json`.
 - `/stop` - Gracefully shut down the Discord bot.
 
 `/help` is available to everyone so users can discover the project and its
@@ -48,7 +48,7 @@ response.
   concise status message.
 - **Direct Message Downloads:** Send the bot a URL or text containing an
   HTTP(S) link in DMs; Markdown link targets are extracted before enqueueing.
-- **Offline DM Catch-Up:** On startup, the bot checks recent authorized DM history for missed messages containing HTTP(S) links and starts unacknowledged requests oldest-first, while skipping extracted URLs already present in the recovery backup.
+- **Offline DM Catch-Up:** On startup, the bot checks recent authorized DM history for missed messages containing HTTP(S) links and starts unacknowledged requests oldest-first, while skipping extracted URLs already tracked as Discord-origin jobs. GUI-origin downloads do not suppress a missed Discord request.
 - **Coordinator attach:** If the Local API is unavailable, the bot launches
   `--server --exit-after`. That starts a headless coordinator when needed or
   attaches to an existing GUI coordinator without creating a second queue. On
@@ -56,12 +56,12 @@ response.
   keeps its server window hidden until a GUI activation request. That request
   preserves `--exit-after`, so the visible app closes after the queue becomes
   idle.
-- **Startup Recovery:** If coordinator-owned downloads were saved in `downloads_backup.json`, the bot registers them before attaching to or starting LzyDownloader, prunes completed entries, and resumes progress tracking without losing startup webhook events. A request/expanded-child ID mismatch is recovered by normalized URL and download type.
-- **Restart-Safe Discord Status:** Active jobs retain their Discord channel/message IDs in a bridge-owned state file, written atomically so a bot restart edits the original status message instead of posting a new one. Older jobs are migrated by matching the most recent 100 DM messages by URL or unique backed-up title; duplicate legacy status messages are updated together. A missing or corrupt state file is treated as empty and does not prevent startup.
+- **Startup Recovery:** The bot reconnects only to Discord-owned active downloads recorded in `downloads_backup.json`; it does not announce GUI-submitted downloads or rewrite the shared coordinator backup during startup. A request/expanded-child ID mismatch is recovered by normalized URL and download type.
+- **Restart-Safe Discord Status:** Discord job provenance and active Discord channel/message IDs are saved atomically in a bridge-owned state file so a bot restart edits the original status message instead of posting a new one. Legacy jobs are migrated only when a matching progress message is found in the most recent 100 DMs and the backup identity is unambiguous; duplicate legacy status messages are updated together. A missing or corrupt state file is treated as empty and does not prevent startup.
 - **Dynamic URL Expansion:** Seamlessly maps internal ID changes from URL expansions (e.g., YouTube Shorts or playlists) back to the original Discord request to keep the UI perfectly synced.
-- **Failed Job Recovery:** Failed, stopped, or errored backup entries can be retried without restarting the bot.
+- **Failed Job Recovery:** Discord-owned failed, stopped, or errored backup entries can be retried without restarting the bot; GUI-owned entries are left alone.
 - **Recovery Deduplication:** `/retry_failed` collapses equivalent failed/stopped entries by generic URL identity and download type before submitting API requests; URL normalization has no extractor-specific branches.
-- **Inactive Job Cleanup:** Failed, stopped, errored, and completed backup entries can be cleared after archiving the previous backup file.
+- **Inactive Job Cleanup:** Discord-owned failed, stopped, errored, and completed backup entries can be cleared after archiving the previous backup file; other coordinator entries are preserved.
 - **Backup Archiving:** Recovery and clear operations preserve old `downloads_backup.json` files as `.bak` archives and prune older bridge-created archives.
 - **Lifecycle Notifications:** Sends a DM to the authorized user when the bot connects to Discord and when it gracefully shuts down.
 - **Queue-Finished Notification:** When the last tracked job reports a terminal state and bridge tracking drains, the bot sends `✅ All downloads are finished!` by DM. This confirms the batch has ended, including failed or cancelled jobs; each original message shows its result.
@@ -137,7 +137,7 @@ Once the bot is online, open Discord and run:
 /cancel job_id:<job-id-from-downloads>
 ```
 
-The bot starts the download locally on your PC and reports progress in Discord. Use `/downloads` to view tracked job IDs, `/cancel` to request cancellation, `/retry_failed` to requeue failed, stopped, or errored recovery jobs, and `/clear_failed` to remove inactive backup entries after archiving the previous backup. If the worker is unavailable, the bridge reloads `LZY_EXECUTABLE_PATH` from `.env` before attempting a launch, so path changes take effect without restarting the bridge.
+The bot starts the download locally on your PC and reports progress in Discord. Use `/downloads` to view Discord-tracked job IDs, `/cancel` to request cancellation, `/retry_failed` to requeue Discord-owned failed, stopped, or errored jobs, and `/clear_failed` to remove Discord-owned inactive backup entries after archiving the previous backup. GUI-submitted jobs are not listed, retried, or cleared by these commands. If the worker is unavailable, the bridge reloads `LZY_EXECUTABLE_PATH` from `.env` before attempting a launch, so path changes take effect without restarting the bridge.
 
 The bot receives progress and terminal states through the local webhook at
 `127.0.0.1:8766/webhook`; it does not poll the C++ `/status` endpoint for live
@@ -153,7 +153,7 @@ this operation.
 - API token: `<platform data root>/LzyDownloader/api_token.txt`
 - API port discovery: `<platform data root>/LzyDownloader/api_port.txt`
 - Shared backup queue: `<platform data root>/LzyDownloader/downloads_backup.json`
-- Discord status-message state: `<platform data root>/LzyDownloader/Server/discord_message_state.json` (active job references only; written atomically and removed as jobs become terminal)
+- Discord status and ownership state: `<platform data root>/LzyDownloader/Server/discord_message_state.json` (Discord job IDs, URLs, download types, and active message references; written atomically. Message references are removed at terminal state while job provenance remains available for failed-job recovery.)
 - Bridge-created recovery archives: `<platform data root>/LzyDownloader/downloads_backup.json.*.bak`
 - Example environment template: `.env.example`
 - Bridge log: `bot.log` beside `lzy_downloader_discord_bridge.py`; rotated archives use names such as `bot_2026-08-12_231530.log` and five are retained. Logs can contain webhook URLs, titles, and errors; restrict access to them.
