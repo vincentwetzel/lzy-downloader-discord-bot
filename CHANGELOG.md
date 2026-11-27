@@ -57,6 +57,10 @@ changes documented in this repository.
 
 ### Fixed
 
+- **Stale child cancellation correlation:** A terminal webhook from an old child
+  matched only by URL can no longer close a newer Discord request. Once a child
+  is observed, its ID remains routed to the parent through progress and terminal
+  updates even when later payloads omit `parent_id` and `url`.
 - **Coordinator GUI and exit lifecycle:** Removed the Windows hidden startup
   flag that could suppress the coordinator's first window show, and preserved
   explicit `--exit-after` when a GUI launch reveals the running server. The

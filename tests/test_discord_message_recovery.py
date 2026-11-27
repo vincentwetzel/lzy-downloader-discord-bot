@@ -479,6 +479,47 @@ class DiscordMessageRecoveryTests(unittest.TestCase):
         self.assertEqual(late_old_progress.status, 200)
         self.assertEqual(bot.active_jobs[parent_id]["progress"], 0)
 
+    def test_unobserved_stale_child_terminal_does_not_close_new_request(self):
+        bot = bridge.LzyBot()
+        parent_id = "new-request"
+        url = "https://www.youtube.com/watch?v=example123"
+        bot.startup_recovery_complete = True
+        bot.active_jobs[parent_id] = bridge.build_active_job_data(url)
+
+        stale_terminal = bot._apply_webhook_data(
+            {
+                "job_id": "previous-child",
+                "url": url,
+                "status": "Cancelled",
+                "progress": 0,
+            }
+        )
+        self.assertEqual(stale_terminal.status, 200)
+        self.assertFalse(bot.active_jobs[parent_id]["is_final"])
+
+        queued_child = bot._apply_webhook_data(
+            {
+                "job_id": "replacement-child",
+                "url": url,
+                "status": "Queued",
+                "progress": -1,
+            }
+        )
+        self.assertEqual(queued_child.status, 200)
+        self.assertEqual(
+            bot.active_jobs[parent_id]["status_text"], "Queued"
+        )
+
+        child_progress = bot._apply_webhook_data(
+            {
+                "job_id": "replacement-child",
+                "status": "Downloading video stream...",
+                "progress": 12,
+            }
+        )
+        self.assertEqual(child_progress.status, 200)
+        self.assertEqual(bot.active_jobs[parent_id]["progress"], 12)
+
     def test_secondary_server_exit_waits_for_existing_api(self):
         process = Mock()
         process.poll.return_value = 0

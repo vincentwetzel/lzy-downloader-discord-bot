@@ -26,7 +26,7 @@ The primary Python process (`lzy_downloader_discord_bridge.py`) that maintains a
   - Hosts an asynchronous webhook listener (`aiohttp`) to receive push updates from the C++ app.
   - Formats webhook JSON payloads into compact Unicode progress bars, displays real-time queue positions, and updates Discord messages with a debounce mechanism. The C++ worker's intermediate `Complete` update is not terminal; the bridge waits for the manager's `Completed` event after post-processing and final-file movement.
   - Uses the C++ `overall_progress` webhook field for multi-stream jobs so Discord percentages remain monotonic across video/audio stream handoff.
-  - Treats terminal webhook state as monotonic, ignoring late non-terminal progress events from a completed child; a previously unseen child UUID for the same tracked parent reopens that parent for a retry or explicit re-download.
+  - Treats terminal webhook state as monotonic, ignoring late non-terminal progress events from a completed child; remembers observed child UUIDs for routing, and ignores terminal events from unseen children matched only by URL so stale cancellation cannot close a newer request. A previously unseen non-terminal child UUID for the same tracked parent reopens that parent for a retry or explicit re-download.
   - Tracks active download jobs and updates the original message with a final status when individual downloads complete.
   - Sends authenticated cancellation requests for active job IDs and recognizes `Cancelled`/`Canceled` webhook states as terminal.
   - Generates and registers a UUID before each new enqueue request, passing it as both `job_id` and `id` so asynchronous backend validation failures remain associated with the originating Discord message.

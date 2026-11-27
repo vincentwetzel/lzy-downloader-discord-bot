@@ -417,10 +417,15 @@ class LzyBot(discord.Client):
             webhook_parent = data.get("parent_id")
             webhook_url = data.get("url", "")
             found_key = None
-            
-            if webhook_parent and str(webhook_parent) in self.active_jobs:
+
+            for existing_key, existing_data in self.active_jobs.items():
+                if job_key in existing_data.get("_child_job_ids", set()):
+                    found_key = existing_key
+                    break
+
+            if found_key is None and webhook_parent and str(webhook_parent) in self.active_jobs:
                 found_key = str(webhook_parent)
-            elif webhook_url:
+            elif found_key is None and webhook_url:
                 def normalize_url(u: str) -> str:
                     return NORMALIZE_URL_REGEX.sub("", u).rstrip("/")
                     
@@ -462,6 +467,30 @@ class LzyBot(discord.Client):
                 return web.Response(status=404, text="Job not tracked by bridge")
 
         job_data = self.active_jobs[job_key]
+        incoming_status = str(data.get("status") or "").lower().strip()
+        has_explicit_parent = bool(data.get("parent_id")) and str(data.get("parent_id")) == job_key
+        is_child_update = source_job_key != job_key
+        child_job_ids = job_data.setdefault("_child_job_ids", set())
+
+        # URL matching can associate a late terminal event from an old child
+        # with a newly submitted request for the same URL. Only trust a child
+        # terminal after we've seen that child become active, unless the
+        # backend explicitly identifies its parent in this payload.
+        if (is_child_update and incoming_status in TERMINAL_WEBHOOK_STATUSES
+                and not has_explicit_parent and source_job_key not in child_job_ids):
+            terminal_source_job_ids = job_data.setdefault(
+                "_terminal_source_job_ids", set()
+            )
+            terminal_source_job_ids.add(source_job_key)
+            logger.info(
+                "Ignoring terminal webhook from unobserved child %s matched to Discord job %s by URL.",
+                source_job_key,
+                job_key,
+            )
+            return web.Response(text="OK")
+
+        if is_child_update:
+            child_job_ids.add(source_job_key)
 
         # A retry/re-download can replace a terminal child job while keeping
         # the same Discord parent.  Remember which backend child produced a
@@ -479,7 +508,6 @@ class LzyBot(discord.Client):
         # "Downloading...".  Terminal state is monotonic for a job; discard
         # late non-terminal updates once completion/cancellation/failure has
         # been observed.
-        incoming_status = str(data.get("status") or "").lower().strip()
         if job_data.get("is_final") and incoming_status not in TERMINAL_WEBHOOK_STATUSES:
             # A different child ID for the same tracked parent is a retry or
             # explicit re-download, not a late event from the child that just
